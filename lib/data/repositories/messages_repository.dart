@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/errors.dart';
@@ -10,18 +14,28 @@ import '../max/max_client.dart';
 import '../max/models/attach.dart';
 import '../max/models/incoming_message.dart';
 import '../max/models/message.dart';
+import '../max/models/upload_input.dart';
+import 'upload_repository.dart';
 
 class MessagesRepository {
   MessagesRepository({
     required this.client,
     required this.db,
     required this.storage,
+    UploadRepository? uploader,
     Logger? logger,
-  }) : _log = logger ?? Logger();
+  })  : _log = logger ?? Logger(),
+        uploader = uploader ??
+            UploadRepository(
+              client: client,
+              db: db,
+              logger: logger,
+            );
 
   final MaxClient client;
   final AppDatabase db;
   final SecureStorage storage;
+  final UploadRepository uploader;
   final Logger _log;
   static const _uuid = Uuid();
   static const _maxAttempts = 5;
@@ -215,6 +229,290 @@ class MessagesRepository {
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
       _onChat.add(chatId);
       return pending.copyWith(status: MessageStatus.failed);
+    }
+  }
+
+  /// Отправить сообщение с одним или несколькими вложениями. Каждый
+  /// [UploadInput] сначала аплоадится через [UploadRepository], затем все
+  /// собранные attach-payload передаются в `sendMessage`. Прогресс
+  /// конкретного файла эмитится через [onProgress] с его индексом.
+  ///
+  /// Если хоть один upload падает — сообщение помечается failed и
+  /// исключение пробрасывается дальше. Уже загруженные attach'и при этом
+  /// остаются со статусом uploaded, чтобы их можно было переотправить.
+  Future<MaxMessage> sendMedia(
+    int chatId,
+    List<UploadInput> inputs, {
+    String text = '',
+    int? replyToId,
+    void Function(int attachIndex, double progress)? onProgress,
+  }) async {
+    if (inputs.isEmpty) {
+      throw ArgumentError('sendMedia requires at least one input');
+    }
+
+    final myId = await storage.readMyUserId();
+    final localId = _uuid.v4();
+    final pending = MaxMessage(
+      chatId: chatId,
+      senderId: myId,
+      text: text,
+      timeMs: DateTime.now().millisecondsSinceEpoch,
+      direction: MessageDirection.outgoing,
+      status: MessageStatus.pending,
+      localId: localId,
+      replyToId: replyToId,
+    );
+    await db.insertMessage(pending);
+
+    // Создаём attach-строки в статусе uploading.
+    final attachRowIds = <int>[];
+    for (final input in inputs) {
+      final fileSize = await _safeSize(input.path);
+      final draft = MaxAttach(
+        type: input.type,
+        status: MaxAttachStatus.uploading,
+        mimeType: input.mimeType,
+        size: fileSize,
+        width: input.width,
+        height: input.height,
+        durationMs: input.durationMs,
+        localPath: input.path,
+        fileName: input.fileName,
+      );
+      final rowId = await db.insertAttach(
+        draft,
+        chatId: chatId,
+        messageLocalId: localId,
+      );
+      attachRowIds.add(rowId);
+    }
+
+    await db.updateChatPreview(
+      chatId: chatId,
+      timeMs: pending.timeMs,
+      preview: text.isNotEmpty ? text : '[Загрузка вложения]',
+    );
+    _onChat.add(chatId);
+
+    // Последовательный upload.
+    final uploaded = <MaxAttach>[];
+    for (var i = 0; i < inputs.length; i++) {
+      try {
+        final a = await uploader.upload(
+          inputs[i],
+          attachRowIds[i],
+          onProgress: (p) => onProgress?.call(i, p),
+        );
+        uploaded.add(a);
+        _onChat.add(chatId);
+      } catch (e) {
+        _log.w('sendMedia upload failed at index $i: $e');
+        // Помечаем все ещё не аплоаженные как failed.
+        for (var j = i; j < attachRowIds.length; j++) {
+          await db.updateAttach(
+            attachRowIds[j],
+            status: MaxAttachStatus.failed,
+          );
+        }
+        await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
+        _onChat.add(chatId);
+        return pending.copyWith(status: MessageStatus.failed);
+      }
+    }
+
+    // Все файлы загружены — собираем payload и шлём sendMessage.
+    final attachesPayload =
+        uploaded.map((a) => a.toServerPayload()).toList(growable: false);
+    try {
+      final res = await client.sendMessage(
+        chatId,
+        text,
+        attaches: attachesPayload,
+        replyToId: replyToId,
+      );
+      final serverId = (res['message'] is Map)
+          ? ((res['message'] as Map)['id'] as num?)?.toInt()
+          : null;
+      await db.updateMessageByLocalId(
+        localId,
+        serverId: serverId,
+        status: MessageStatus.sent,
+      );
+      if (serverId != null) {
+        await db.linkAttachesToServerId(localId, serverId);
+      }
+      await db.updateChatPreview(
+        chatId: chatId,
+        timeMs: pending.timeMs,
+        preview: text.isNotEmpty ? text : '[Вложение]',
+      );
+      _onChat.add(chatId);
+      return pending.copyWith(
+        id: serverId,
+        status: MessageStatus.sent,
+        attaches: uploaded,
+      );
+    } on MaxNotConnected catch (e) {
+      _log.i('sendMedia offline after upload, marking failed: $e');
+      await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
+      _onChat.add(chatId);
+      return pending.copyWith(status: MessageStatus.failed, attaches: uploaded);
+    } on MaxTimeout catch (e) {
+      _log.i('sendMedia timeout after upload: $e');
+      await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
+      _onChat.add(chatId);
+      return pending.copyWith(status: MessageStatus.failed, attaches: uploaded);
+    } catch (e) {
+      _log.w('sendMedia sendMessage failed: $e');
+      await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
+      _onChat.add(chatId);
+      return pending.copyWith(status: MessageStatus.failed, attaches: uploaded);
+    }
+  }
+
+  Future<int?> _safeSize(String path) async {
+    try {
+      return await File(path).length();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Скачать вложение в локальный кеш. Возвращает абсолютный путь к файлу
+  /// или null, если файл нельзя достать (нет fileId, сетевая ошибка).
+  ///
+  /// Кеш-хит: если `a.localPath` существует на диске — отдаём его без
+  /// похода на сервер. URL запрашивается через opcode 83 (video) или 88
+  /// (всё остальное). Прогресс эмитится в БД каждые 64KB; после успеха
+  /// статус становится `downloaded`, путь и downloadUrl сохраняются.
+  Future<String?> downloadAttach(
+    MaxAttach a, {
+    required int chatId,
+    required int messageId,
+  }) async {
+    final existingPath = a.localPath;
+    if (existingPath != null) {
+      try {
+        if (await File(existingPath).exists()) return existingPath;
+      } catch (_) {
+        // упало stat — продолжаем как cache miss
+      }
+    }
+    final fileId = a.fileId;
+    if (fileId == null) return null;
+    final rowId = a.rowId;
+
+    Future<void> setStatus(MaxAttachStatus s, {double? progress}) async {
+      if (rowId == null) return;
+      await db.updateAttach(rowId, status: s, progress: progress);
+    }
+
+    try {
+      await setStatus(MaxAttachStatus.downloading, progress: 0);
+
+      // Получаем актуальный URL у сервера.
+      final Map<String, dynamic> res;
+      if (a.type == MaxAttachType.video) {
+        res = await client.requestVideoPlay(
+          videoId: fileId,
+          chatId: chatId,
+          messageId: messageId,
+          token: a.token,
+        );
+      } else {
+        res = await client.requestFileDownload(
+          fileId: fileId,
+          chatId: chatId,
+          messageId: messageId,
+        );
+      }
+      final url = res['url']?.toString();
+      if (url == null || url.isEmpty) {
+        _log.w('downloadAttach: empty url for fileId=$fileId');
+        await setStatus(MaxAttachStatus.failed);
+        return null;
+      }
+
+      // Готовим путь в getApplicationDocumentsDirectory()/maxim_media.
+      final docs = await getApplicationDocumentsDirectory();
+      final mediaDir = Directory(p.join(docs.path, 'maxim_media'));
+      if (!await mediaDir.exists()) {
+        await mediaDir.create(recursive: true);
+      }
+      final safeName = (a.fileName != null && a.fileName!.trim().isNotEmpty)
+          ? a.fileName!.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+          : 'file';
+      final outPath = p.join(mediaDir.path, '${fileId}_$safeName');
+
+      // Стримим GET в файл; прогресс каждые 64KB.
+      final httpClient = http.Client();
+      try {
+        final request = http.Request('GET', Uri.parse(url));
+        final response = await httpClient.send(request);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          _log.w('downloadAttach: HTTP ${response.statusCode} on $url');
+          await setStatus(MaxAttachStatus.failed);
+          return null;
+        }
+        final total = response.contentLength;
+        final out = File(outPath);
+        final sink = out.openWrite();
+        var received = 0;
+        var sinceEmit = 0;
+        const emitEvery = 64 * 1024;
+        try {
+          await for (final chunk in response.stream) {
+            sink.add(chunk);
+            received += chunk.length;
+            sinceEmit += chunk.length;
+            if (sinceEmit >= emitEvery && total != null && total > 0) {
+              sinceEmit = 0;
+              final p01 = (received / total).clamp(0.0, 1.0);
+              if (rowId != null) {
+                await db.updateAttach(rowId, progress: p01);
+              }
+            }
+          }
+          await sink.flush();
+        } finally {
+          await sink.close();
+        }
+
+        if (rowId != null) {
+          await db.updateAttach(
+            rowId,
+            status: MaxAttachStatus.downloaded,
+            localPath: outPath,
+            downloadUrl: url,
+            progress: 1.0,
+          );
+        }
+        _onChat.add(chatId);
+        return outPath;
+      } finally {
+        httpClient.close();
+      }
+    } on SocketException catch (e) {
+      _log.w('downloadAttach socket error: $e');
+      await setStatus(MaxAttachStatus.failed);
+      return null;
+    } on HttpException catch (e) {
+      _log.w('downloadAttach http error: $e');
+      await setStatus(MaxAttachStatus.failed);
+      return null;
+    } on MaxNotConnected catch (e) {
+      _log.i('downloadAttach offline: $e');
+      await setStatus(MaxAttachStatus.failed);
+      return null;
+    } on MaxTimeout catch (e) {
+      _log.i('downloadAttach timeout: $e');
+      await setStatus(MaxAttachStatus.failed);
+      return null;
+    } catch (e) {
+      _log.w('downloadAttach failed: $e');
+      await setStatus(MaxAttachStatus.failed);
+      return null;
     }
   }
 

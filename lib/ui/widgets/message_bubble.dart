@@ -2,14 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../data/max/models/message.dart';
+import 'attach_preview.dart';
 
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message, this.onRetry});
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.onRetry,
+    this.chatId,
+    this.messageServerId,
+  });
   final MaxMessage message;
 
   /// Колбэк по тапу на статус-иконку failed-сообщения. Если null — иконка не
   /// кликабельная.
   final VoidCallback? onRetry;
+
+  /// id чата — нужен для AttachPreview (запрос download URL).
+  final int? chatId;
+
+  /// Серверный id сообщения для download endpoint. Если null, attach
+  /// без локального пути не сможет начать скачиваться.
+  final int? messageServerId;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +62,11 @@ class MessageBubble extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (hasReply) _replyBlock(fg),
-            Text(message.text, style: TextStyle(color: fg)),
+            if (message.attaches.isNotEmpty) _attachList(),
+            if (message.text.isNotEmpty) ...[
+              if (message.attaches.isNotEmpty) const SizedBox(height: 4),
+              Text(message.text, style: TextStyle(color: fg)),
+            ],
             const SizedBox(height: 2),
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -92,6 +110,24 @@ class MessageBubble extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _attachList() {
+    final cId = chatId ?? message.chatId;
+    final items = <Widget>[];
+    for (var i = 0; i < message.attaches.length; i++) {
+      if (i > 0) items.add(const SizedBox(height: 4));
+      items.add(AttachPreview(
+        attach: message.attaches[i],
+        chatId: cId,
+        messageServerId: messageServerId ?? message.id,
+      ));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: items,
     );
   }
 

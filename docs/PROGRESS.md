@@ -55,10 +55,27 @@
 
 ## Этап 2 — медиа (в работе)
 
-План:
-- **Phase 2.1** — фундамент: опкоды в `MaxClient`, модель `MaxAttach`, БД v3→v4 (таблица `attachments`).
-- **Phase 2.2** — Upload pipeline + UI медиа (2 агента параллельно).
-- **Phase 2.3** — MSG_EDIT, CHAT_MEDIA-галерея, TRANSCRIBE.
+### ✅ Phase 2.1 — фундамент (2026-05-24)
+
+- Опкоды 51/67/80/81/82/83/87/88/136/202/293 в `MaxOp`.
+- Модель `MaxAttach` (type/status/token/fileId/mime/size/dimensions/duration/localPath/downloadUrl/progress) + методы `toServerPayload`, `toDbMap`, `fromDbRow`, `fromServer`.
+- `MaxMessage.attaches: List<MaxAttach>` (через джойн отдельной таблицы).
+- БД схема v4: таблица `attachments` (rowid PK, message_local_id?, message_server_id?, chat_id, type, status, token, file_id, mime_type, size_bytes, width, height, duration_ms, local_path, download_url, thumbnail_url, file_name, progress, created_at).
+- `MaxClient`: методы `requestPhotoUpload`, `requestVideoUpload`, `requestFileUpload`, `requestVideoPlay`, `requestFileDownload`, `chatMedia`, `editMessage`, `transcribeMedia`. `sendMessage` принимает `attaches` + `replyToId`.
+- `IncomingMessage.attaches`, `_parsePush` принимает сообщения без текста если есть attach.
+- `MessagesRepository._persistAttaches` подключён к push и history.
+
+Тесты: 7/7 (новый `attach_test.dart` — 4 case).
+`flutter analyze`: 0 issues.
+
+### ⏳ Phase 2.2 — Upload pipeline + UI медиа
+
+- **Agent E (2.2A)**: HTTP POST файла на upload-URL, прогресс, retry, привязка token к message.attaches при отправке.
+- **Agent F (2.2B)**: image_picker/file_picker, рендер attach-пузырей, прогресс upload в UI, download по opcode 88 в кеш.
+
+### Phase 2.3 — расширенные функции
+
+MSG_EDIT (67), CHAT_MEDIA-галерея (51), TRANSCRIBE (202).
 
 ---
 

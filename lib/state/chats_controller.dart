@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/max/models/attach.dart';
 import '../data/max/models/chat.dart';
 import '../data/max/models/message.dart';
+import '../data/max/models/upload_input.dart';
 import 'providers.dart';
 
 /// Поток списка чатов, перерисовывается при любом изменении.
@@ -120,6 +122,39 @@ class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
   Future<void> retryFailed() async {
     final repo = await ref.read(messagesRepositoryProvider.future);
     await repo.retryFailed(_chatId);
+  }
+
+  /// Отправить сообщение с одним или несколькими вложениями. После
+  /// возврата дёргает _reload() — список сообщений перерисуется.
+  Future<void> sendMedia(
+    List<UploadInput> inputs, {
+    String text = '',
+    int? replyToId,
+  }) async {
+    if (inputs.isEmpty) return;
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    await repo.sendMedia(
+      _chatId,
+      inputs,
+      text: text,
+      replyToId: replyToId,
+    );
+    await _reload();
+  }
+
+  /// Скачать вложение в локальный кеш. Возвращает путь к файлу или null
+  /// (ошибка/нет fileId). После успеха перерисовывает чат.
+  Future<String?> downloadAttach(MaxAttach a, int messageServerId) async {
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    final path = await repo.downloadAttach(
+      a,
+      chatId: _chatId,
+      messageId: messageServerId,
+    );
+    if (path != null) {
+      await _reload();
+    }
+    return path;
   }
 }
 

@@ -167,15 +167,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               _scrollToEnd();
             },
             onTypingChanged: (active) => ctrl.sendTyping(active),
-            onAttach: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text(
-                    'Отправка медиа пока не реализована: опкоды протокола '
-                    'для загрузки файлов не реверснуты.',
-                  ),
-                ),
-              );
+            onAttach: (inputs) async {
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                await ctrl.sendMedia(inputs, text: '');
+                _scrollToEnd();
+              } catch (e) {
+                messenger.showSnackBar(
+                  SnackBar(content: Text('Не удалось отправить вложение: $e')),
+                );
+              }
             },
           ),
         ],
@@ -225,6 +226,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               onLongPress: () => _onMessageLongPress(m),
               child: MessageBubble(
                 message: m,
+                chatId: widget.chatId,
+                messageServerId: m.id,
                 onRetry: m.status == MessageStatus.failed
                     ? () => ref
                         .read(chatHistoryProvider(widget.chatId).notifier)
