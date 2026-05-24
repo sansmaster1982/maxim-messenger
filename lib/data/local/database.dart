@@ -20,11 +20,27 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
     _instance = AppDatabase._(db);
     return _instance!;
+  }
+
+  static Future<void> _onUpgrade(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 2) {
+      await db.execute(
+        'ALTER TABLE messages ADD COLUMN reply_to_id INTEGER',
+      );
+      await db.execute(
+        'ALTER TABLE messages ADD COLUMN reply_to_preview TEXT',
+      );
+    }
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -53,7 +69,9 @@ class AppDatabase {
         text TEXT NOT NULL,
         time_ms INTEGER NOT NULL,
         direction TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'sent'
+        status TEXT NOT NULL DEFAULT 'sent',
+        reply_to_id INTEGER,
+        reply_to_preview TEXT
       )
     ''');
     await db.execute('''
@@ -167,6 +185,33 @@ class AppDatabase {
     );
   }
 
+  /// id самого старого сообщения в чате с серверным id (для пагинации).
+  /// Возвращает null если в чате нет сообщений с проставленным id.
+  Future<int?> oldestServerMessageId(int chatId) async {
+    final rows = await _db.query(
+      'messages',
+      columns: ['id'],
+      where: 'chat_id = ? AND id IS NOT NULL',
+      whereArgs: [chatId],
+      orderBy: 'time_ms ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['id'] as int?;
+  }
+
+  /// Сообщение по серверному id (для построения reply-превью).
+  Future<MaxMessage?> messageById(int id) async {
+    final rows = await _db.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return MaxMessage.fromDbRow(rows.first);
+  }
+
   Future<void> updateMessageByLocalId(
     String localId, {
     int? serverId,
@@ -208,6 +253,29 @@ class AppDatabase {
       c.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+  }
+
+  Future<void> deleteContact(int id) async {
+    await _db.delete(
+      'contacts',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<List<MaxContact>> searchContacts(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) {
+      return contacts();
+    }
+    final like = '%${q.toLowerCase()}%';
+    final rows = await _db.query(
+      'contacts',
+      where: 'LOWER(name) LIKE ? OR LOWER(phone) LIKE ?',
+      whereArgs: [like, like],
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map(MaxContact.fromDbRow).toList();
   }
 
   // ─────────────────────── processed ids ───────────────────

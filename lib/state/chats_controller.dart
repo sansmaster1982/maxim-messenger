@@ -44,6 +44,10 @@ final chatsListProvider =
 class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
   StreamSubscription? _sub;
   late int _chatId;
+  bool _loadingOlder = false;
+
+  /// Истинно пока идёт догрузка более старых сообщений — UI рисует спиннер.
+  bool get isLoadingOlder => _loadingOlder;
 
   @override
   Future<List<MaxMessage>> build(int chatId) async {
@@ -68,14 +72,47 @@ class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
     state = AsyncData(await repo.localHistory(_chatId));
   }
 
-  Future<void> send(String text) async {
+  Future<void> send(
+    String text, {
+    int? replyToId,
+    String? replyToPreview,
+  }) async {
     final repo = await ref.read(messagesRepositoryProvider.future);
-    await repo.sendText(_chatId, text);
+    await repo.sendText(
+      _chatId,
+      text,
+      replyToId: replyToId,
+      replyToPreview: replyToPreview,
+    );
   }
 
   Future<void> syncFromServer({int count = 50}) async {
     final repo = await ref.read(messagesRepositoryProvider.future);
     await repo.syncHistory(_chatId, count: count);
+  }
+
+  /// Подтянуть более старые сообщения. UI вызывает при скролле вверх.
+  Future<void> loadOlder({int count = 50}) async {
+    if (_loadingOlder) return;
+    _loadingOlder = true;
+    // Перерисуем, чтобы показать спиннер сверху.
+    if (state is AsyncData<List<MaxMessage>>) {
+      state = AsyncData(state.value ?? const []);
+    }
+    try {
+      final repo = await ref.read(messagesRepositoryProvider.future);
+      await repo.loadOlder(_chatId, count: count);
+    } finally {
+      _loadingOlder = false;
+      if (state is AsyncData<List<MaxMessage>>) {
+        state = AsyncData(state.value ?? const []);
+      }
+    }
+  }
+
+  Future<void> sendTyping(bool active) async {
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    await repo.sendTyping(_chatId, active: active);
   }
 }
 

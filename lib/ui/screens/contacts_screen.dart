@@ -2,83 +2,223 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/max/models/contact.dart';
+import '../../state/contacts_controller.dart';
 import '../../state/providers.dart';
 import 'chat_screen.dart';
 
-final _contactsListProvider = FutureProvider<List<MaxContact>>((ref) async {
-  final repo = await ref.watch(contactsRepositoryProvider.future);
-  return repo.listLocal();
-});
-
-class ContactsScreen extends ConsumerWidget {
+class ContactsScreen extends ConsumerStatefulWidget {
   const ContactsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(_contactsListProvider);
+  ConsumerState<ContactsScreen> createState() => _ContactsScreenState();
+}
+
+class _ContactsScreenState extends ConsumerState<ContactsScreen> {
+  bool _showSearch = false;
+  final _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(contactsListProvider);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Контакты'),
         actions: [
           IconButton(
+            tooltip: _showSearch ? 'Скрыть поиск' : 'Поиск',
+            onPressed: _toggleSearch,
+            icon: Icon(_showSearch ? Icons.search_off : Icons.search),
+          ),
+          IconButton(
+            tooltip: 'Импорт из адресной книги',
+            onPressed: _runImport,
+            icon: const Icon(Icons.cloud_download_outlined),
+          ),
+          IconButton(
             tooltip: 'Добавить по номеру',
-            onPressed: () => _showAddDialog(context, ref),
+            onPressed: _showAddDialog,
             icon: const Icon(Icons.person_add_alt),
           ),
         ],
+        bottom: _showSearch
+            ? PreferredSize(
+                preferredSize: const Size.fromHeight(56),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Поиск',
+                      isDense: true,
+                      filled: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchCtrl.text.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                ref
+                                    .read(contactsListProvider.notifier)
+                                    .search('');
+                                ref
+                                    .read(contactsSearchQueryProvider.notifier)
+                                    .state = '';
+                                setState(() {});
+                              },
+                            ),
+                    ),
+                    onChanged: (v) {
+                      ref.read(contactsListProvider.notifier).search(v);
+                      ref.read(contactsSearchQueryProvider.notifier).state = v;
+                      setState(() {});
+                    },
+                  ),
+                ),
+              )
+            : null,
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Ошибка: $e')),
         data: (items) {
           if (items.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Контактов нет. Добавь первый по номеру телефона.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: () => _showAddDialog(context, ref),
-                      icon: const Icon(Icons.person_add_alt),
-                      label: const Text('Добавить'),
-                    ),
-                  ],
-                ),
-              ),
+            return _EmptyState(
+              onAdd: _showAddDialog,
+              onImport: _runImport,
+              isSearch: _searchCtrl.text.isNotEmpty,
             );
           }
-          return ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const Divider(height: 0),
-            itemBuilder: (_, i) {
-              final c = items[i];
-              final initial =
-                  (c.name?.isNotEmpty ?? false) ? c.name![0].toUpperCase() : '?';
-              return ListTile(
-                leading: CircleAvatar(child: Text(initial)),
-                title: Text(c.name ?? c.phone ?? 'Контакт ${c.id}'),
-                subtitle: c.phone == null ? null : Text(c.phone!),
-                trailing: const Icon(Icons.chat_bubble_outline),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChatScreen(chatId: c.id, title: c.name),
-                  ),
-                ),
-              );
-            },
+          return _GroupedContactsList(
+            items: items,
+            onTap: _openChat,
+            onDelete: _confirmDelete,
           );
         },
       ),
     );
   }
 
-  Future<void> _showAddDialog(BuildContext context, WidgetRef ref) async {
+  void _toggleSearch() {
+    setState(() {
+      _showSearch = !_showSearch;
+      if (!_showSearch) {
+        _searchCtrl.clear();
+        ref.read(contactsListProvider.notifier).search('');
+        ref.read(contactsSearchQueryProvider.notifier).state = '';
+      }
+    });
+  }
+
+  void _openChat(MaxContact c) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(chatId: c.id, title: c.name),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(MaxContact c) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить контакт?'),
+        content: Text(c.name ?? c.phone ?? 'Контакт ${c.id}'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(contactsListProvider.notifier).removeContact(c.id);
+      messenger.showSnackBar(const SnackBar(content: Text('Контакт удалён')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+    }
+  }
+
+  Future<void> _runImport() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final progressNotifier = ValueNotifier<ImportProgress>(
+      ImportProgress.idle.copyWith(running: true),
+    );
+    var dismissed = false;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Импорт контактов'),
+          content: ValueListenableBuilder<ImportProgress>(
+            valueListenable: progressNotifier,
+            builder: (_, p, __) {
+              final value =
+                  (p.total > 0) ? (p.done / p.total).clamp(0.0, 1.0) : null;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(value: value),
+                  const SizedBox(height: 12),
+                  Text(
+                    p.total == 0
+                        ? 'Чтение адресной книги...'
+                        : 'Проверка: ${p.done} из ${p.total}',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    ).then((_) => dismissed = true);
+
+    try {
+      final found = await ref
+          .read(contactsListProvider.notifier)
+          .importFromAddressBook(
+            onProgress: (p) => progressNotifier.value = p,
+          );
+      if (!dismissed && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      messenger.showSnackBar(
+        SnackBar(content: Text('Найдено в MAX: $found')),
+      );
+    } catch (e) {
+      if (!dismissed && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      messenger.showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+    } finally {
+      progressNotifier.dispose();
+    }
+  }
+
+  Future<void> _showAddDialog() async {
     final ctrl = TextEditingController();
     final result = await showDialog<String>(
       context: context,
@@ -107,12 +247,12 @@ class ContactsScreen extends ConsumerWidget {
       },
     );
     if (result == null || result.isEmpty) return;
-    if (!context.mounted) return;
+    if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
       final repo = await ref.read(contactsRepositoryProvider.future);
       final c = await repo.findByPhone(result);
-      ref.invalidate(_contactsListProvider);
+      await ref.read(contactsListProvider.notifier).refresh();
       messenger.showSnackBar(
         SnackBar(content: Text('Найден: ${c.name ?? c.phone ?? c.id}')),
       );
@@ -120,4 +260,155 @@ class ContactsScreen extends ConsumerWidget {
       messenger.showSnackBar(SnackBar(content: Text('Ошибка: $e')));
     }
   }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.onAdd,
+    required this.onImport,
+    required this.isSearch,
+  });
+
+  final VoidCallback onAdd;
+  final VoidCallback onImport;
+  final bool isSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isSearch) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Ничего не найдено',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Контактов нет. Импортируй адресную книгу или добавь номер вручную.',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onImport,
+              icon: const Icon(Icons.cloud_download_outlined),
+              label: const Text('Импорт из телефона'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: onAdd,
+              icon: const Icon(Icons.person_add_alt),
+              label: const Text('Добавить по номеру'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupedContactsList extends StatelessWidget {
+  const _GroupedContactsList({
+    required this.items,
+    required this.onTap,
+    required this.onDelete,
+  });
+
+  final List<MaxContact> items;
+  final void Function(MaxContact) onTap;
+  final void Function(MaxContact) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _groupByLetter(items);
+    final keys = groups.keys.toList();
+    final entries = <_ListEntry>[];
+    for (final k in keys) {
+      entries.add(_ListEntry.header(k));
+      for (final c in groups[k]!) {
+        entries.add(_ListEntry.contact(c));
+      }
+    }
+    return ListView.builder(
+      itemCount: entries.length,
+      itemBuilder: (ctx, i) {
+        final e = entries[i];
+        if (e.isHeader) {
+          return Container(
+            color: Theme.of(ctx).colorScheme.surfaceContainerHighest,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Text(
+              e.header!,
+              style: Theme.of(ctx).textTheme.labelLarge,
+            ),
+          );
+        }
+        final c = e.contact!;
+        final initial =
+            (c.name?.isNotEmpty ?? false) ? c.name![0].toUpperCase() : '#';
+        return Dismissible(
+          key: ValueKey('contact-${c.id}'),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            color: Theme.of(ctx).colorScheme.errorContainer,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Icon(
+              Icons.delete,
+              color: Theme.of(ctx).colorScheme.onErrorContainer,
+            ),
+          ),
+          confirmDismiss: (_) async {
+            onDelete(c);
+            // Возвращаем false: подтверждение и удаление делаем сами,
+            // чтобы ListView сам перерисовался после обновления стейта.
+            return false;
+          },
+          child: ListTile(
+            leading: CircleAvatar(child: Text(initial)),
+            title: Text(c.name ?? c.phone ?? 'Контакт ${c.id}'),
+            subtitle: c.phone == null ? null : Text(c.phone!),
+            trailing: const Icon(Icons.chat_bubble_outline),
+            onTap: () => onTap(c),
+          ),
+        );
+      },
+    );
+  }
+
+  static Map<String, List<MaxContact>> _groupByLetter(List<MaxContact> all) {
+    final map = <String, List<MaxContact>>{};
+    for (final c in all) {
+      final n = c.name?.trim();
+      final key = (n != null && n.isNotEmpty)
+          ? n[0].toUpperCase()
+          : '#';
+      map.putIfAbsent(key, () => []).add(c);
+    }
+    final sortedKeys = map.keys.toList()
+      ..sort((a, b) {
+        if (a == '#') return 1;
+        if (b == '#') return -1;
+        return a.compareTo(b);
+      });
+    return {for (final k in sortedKeys) k: map[k]!};
+  }
+}
+
+class _ListEntry {
+  _ListEntry.header(this.header) : contact = null;
+  _ListEntry.contact(this.contact) : header = null;
+
+  final String? header;
+  final MaxContact? contact;
+
+  bool get isHeader => header != null;
 }
