@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../../core/constants.dart';
+import '../max/models/attach.dart';
 import '../max/models/chat.dart';
 import '../max/models/contact.dart';
 import '../max/models/message.dart';
@@ -20,7 +21,7 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -52,6 +53,44 @@ class AppDatabase {
         )
       ''');
     }
+    if (oldVersion < 4) {
+      await _createAttachmentsTable(db);
+    }
+  }
+
+  static Future<void> _createAttachmentsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE attachments (
+        rowid_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_local_id TEXT,
+        message_server_id INTEGER,
+        chat_id INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'idle',
+        token TEXT,
+        file_id INTEGER,
+        mime_type TEXT,
+        size_bytes INTEGER,
+        width INTEGER,
+        height INTEGER,
+        duration_ms INTEGER,
+        local_path TEXT,
+        download_url TEXT,
+        thumbnail_url TEXT,
+        file_name TEXT,
+        progress REAL NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_att_local ON attachments(message_local_id)
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_att_server ON attachments(message_server_id)
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_att_chat ON attachments(chat_id)
+    ''');
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -119,6 +158,8 @@ class AppDatabase {
         attempts INTEGER NOT NULL DEFAULT 0
       )
     ''');
+
+    await _createAttachmentsTable(db);
   }
 
   Database get raw => _db;
@@ -195,7 +236,36 @@ class AppDatabase {
       orderBy: 'time_ms ASC',
       limit: limit,
     );
-    return rows.map(MaxMessage.fromDbRow).toList();
+    if (rows.isEmpty) return const [];
+    final base = rows.map(MaxMessage.fromDbRow).toList();
+    final byLocal = <String, List<MaxAttach>>{};
+    final byServer = <int, List<MaxAttach>>{};
+    final attRows = await _db.query(
+      'attachments',
+      where: 'chat_id = ?',
+      whereArgs: [chatId],
+      orderBy: 'rowid_pk ASC',
+    );
+    for (final r in attRows) {
+      final a = MaxAttach.fromDbRow(r);
+      final lid = r['message_local_id'] as String?;
+      final sid = (r['message_server_id'] as num?)?.toInt();
+      if (lid != null) {
+        byLocal.putIfAbsent(lid, () => []).add(a);
+      }
+      if (sid != null) {
+        byServer.putIfAbsent(sid, () => []).add(a);
+      }
+    }
+    return [
+      for (final m in base)
+        m.copyWith(
+          attaches: [
+            ...?(m.localId != null ? byLocal[m.localId!] : null),
+            ...?(m.id != null ? byServer[m.id!] : null),
+          ],
+        ),
+    ];
   }
 
   Future<int> insertMessage(MaxMessage m) async {
@@ -377,5 +447,100 @@ class AppDatabase {
     await _db.delete('contacts');
     await _db.delete('processed_message_ids');
     await _db.delete('outbox');
+    await _db.delete('attachments');
+  }
+
+  // ─────────────────────── attachments ─────────────────────
+
+  Future<int> insertAttach(
+    MaxAttach a, {
+    String? messageLocalId,
+    int? messageServerId,
+    required int chatId,
+  }) async {
+    return _db.insert(
+      'attachments',
+      a.toDbMap()
+        ..['message_local_id'] = messageLocalId
+        ..['message_server_id'] = messageServerId
+        ..['chat_id'] = chatId
+        ..['created_at'] = DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<void> updateAttach(
+    int rowId, {
+    MaxAttachStatus? status,
+    String? token,
+    int? fileId,
+    String? downloadUrl,
+    String? localPath,
+    double? progress,
+  }) async {
+    final values = <String, Object?>{};
+    if (status != null) values['status'] = status.name;
+    if (token != null) values['token'] = token;
+    if (fileId != null) values['file_id'] = fileId;
+    if (downloadUrl != null) values['download_url'] = downloadUrl;
+    if (localPath != null) values['local_path'] = localPath;
+    if (progress != null) values['progress'] = progress;
+    if (values.isEmpty) return;
+    await _db.update(
+      'attachments',
+      values,
+      where: 'rowid_pk = ?',
+      whereArgs: [rowId],
+    );
+  }
+
+  /// После того как сервер вернул серверный id сообщения, перенесём связь
+  /// attach'ей с локального id на серверный, чтобы они нашлись в истории.
+  Future<void> linkAttachesToServerId(String localId, int serverId) async {
+    await _db.update(
+      'attachments',
+      {'message_server_id': serverId},
+      where: 'message_local_id = ? AND message_server_id IS NULL',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<List<MaxAttach>> attachesForLocal(String localId) async {
+    final r = await _db.query(
+      'attachments',
+      where: 'message_local_id = ?',
+      whereArgs: [localId],
+      orderBy: 'rowid_pk ASC',
+    );
+    return r.map(MaxAttach.fromDbRow).toList();
+  }
+
+  Future<List<MaxAttach>> attachesForServer(int serverId) async {
+    final r = await _db.query(
+      'attachments',
+      where: 'message_server_id = ?',
+      whereArgs: [serverId],
+      orderBy: 'rowid_pk ASC',
+    );
+    return r.map(MaxAttach.fromDbRow).toList();
+  }
+
+  /// Все attach'и чата по типам — для будущего экрана «галерея чата».
+  Future<List<MaxAttach>> attachesForChat(
+    int chatId, {
+    List<MaxAttachType>? types,
+  }) async {
+    final args = <Object?>[chatId];
+    var where = 'chat_id = ?';
+    if (types != null && types.isNotEmpty) {
+      where += ' AND type IN (${List.filled(types.length, '?').join(',')})';
+      args.addAll(types.map((t) => t.protocolName));
+    }
+    final r = await _db.query(
+      'attachments',
+      where: where,
+      whereArgs: args,
+      orderBy: 'created_at DESC',
+    );
+    return r.map(MaxAttach.fromDbRow).toList();
   }
 }

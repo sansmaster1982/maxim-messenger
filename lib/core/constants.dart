@@ -9,7 +9,8 @@ class MaxProto {
 }
 
 /// Опкоды, известные на текущий момент.
-/// Источник: реверс протокола в telega-to-max/max_client.py.
+/// Источник: реверс протокола в telega-to-max/max_client.py + декомпил APK
+/// (см. docs/MEDIA_OPCODES.md).
 class MaxOp {
   static const int init = 6;
   static const int profile = 16;
@@ -20,9 +21,20 @@ class MaxOp {
   static const int contactByPhone = 46;
   static const int chatInfo = 48;
   static const int chatHistory = 49;
+  static const int chatMedia = 51;
   static const int sendMessage = 64;
   static const int typing = 65;
+  static const int editMessage = 67;
+  static const int photoUpload = 80;
+  static const int stickerUpload = 81;
+  static const int videoUpload = 82;
+  static const int videoPlay = 83;
+  static const int fileUpload = 87;
+  static const int fileDownload = 88;
   static const int twoFa = 115;
+  static const int notifAttach = 136;
+  static const int transcribeMedia = 202;
+  static const int notifTranscription = 293;
 }
 
 class AppMeta {

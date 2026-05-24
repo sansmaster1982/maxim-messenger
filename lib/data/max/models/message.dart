@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import 'attach.dart';
+
 enum MessageDirection { incoming, outgoing }
 
 enum MessageStatus { pending, sent, delivered, read, failed }
@@ -23,6 +25,10 @@ class MaxMessage extends Equatable {
   /// дополнительного запроса в БД.
   final String? replyToPreview;
 
+  /// Вложения сообщения. Хранятся в отдельной таблице `attachments`,
+  /// подгружаются репозиторием. В `toMap`/`fromDbRow` НЕ участвуют.
+  final List<MaxAttach> attaches;
+
   const MaxMessage({
     required this.chatId,
     required this.text,
@@ -34,6 +40,7 @@ class MaxMessage extends Equatable {
     this.localId,
     this.replyToId,
     this.replyToPreview,
+    this.attaches = const [],
   });
 
   MaxMessage copyWith({
@@ -43,6 +50,7 @@ class MaxMessage extends Equatable {
     int? timeMs,
     int? replyToId,
     String? replyToPreview,
+    List<MaxAttach>? attaches,
   }) {
     return MaxMessage(
       id: id ?? this.id,
@@ -55,8 +63,11 @@ class MaxMessage extends Equatable {
       localId: localId,
       replyToId: replyToId ?? this.replyToId,
       replyToPreview: replyToPreview ?? this.replyToPreview,
+      attaches: attaches ?? this.attaches,
     );
   }
+
+  bool get hasAttaches => attaches.isNotEmpty;
 
   Map<String, Object?> toMap() => {
     'id': id,
@@ -102,5 +113,6 @@ class MaxMessage extends Equatable {
     status,
     replyToId,
     replyToPreview,
+    attaches,
   ];
 }

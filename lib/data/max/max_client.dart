@@ -193,10 +193,24 @@ class MaxClient {
 
   // ───────────────────────── messaging ────────────────────────
 
-  Future<Map<String, dynamic>> sendMessage(int chatId, String text) async {
+  Future<Map<String, dynamic>> sendMessage(
+    int chatId,
+    String text, {
+    List<Map<String, Object?>>? attaches,
+    int? replyToId,
+  }) async {
+    final message = <String, Object?>{'text': text};
+    if (attaches != null && attaches.isNotEmpty) {
+      message['attaches'] = attaches;
+    }
+    if (replyToId != null) {
+      // ключ reply в payload sendMessage MAX не подтверждён в декомпиле,
+      // отправляем как `replyTo` — сервер либо примет, либо проигнорирует.
+      message['replyTo'] = replyToId;
+    }
     final f = await _request(MaxOp.sendMessage, {
       'chatId': chatId,
-      'message': {'text': text},
+      'message': message,
       'randomId': DateTime.now().millisecondsSinceEpoch,
     });
     if (f.cmd != 1) throw MaxError('send_message cmd=${f.cmd}');
@@ -208,6 +222,131 @@ class MaxClient {
       'chatId': chatId,
       'typing': isTyping,
     });
+  }
+
+  /// Редактирование уже отправленного сообщения (opcode 67).
+  Future<Map<String, dynamic>> editMessage(
+    int chatId,
+    int messageId,
+    String text, {
+    List<Map<String, Object?>>? attaches,
+  }) async {
+    final payload = <String, Object?>{
+      'chatId': chatId,
+      'messageId': messageId,
+      'text': text,
+    };
+    if (attaches != null) payload['attachments'] = attaches;
+    final f = await _request(MaxOp.editMessage, payload);
+    if (f.cmd != 1) throw MaxError('editMessage cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  // ───────────────────────── media ────────────────────────────
+
+  /// Запрос upload-URL для фото. Возвращает декодированный ответ — клиент
+  /// должен взять оттуда `url` (HTTP POST endpoint) и `photoToken`.
+  /// Поле profile=true используется для аватарок.
+  Future<Map<String, dynamic>> requestPhotoUpload({
+    int count = 1,
+    bool profile = false,
+  }) async {
+    final f = await _request(MaxOp.photoUpload, {
+      'count': count,
+      'profile': profile,
+    });
+    if (f.cmd != 1) throw MaxError('photoUpload cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Запрос параметров видео-аплоада.
+  /// `uploaderType` ∈ {VIDEO, VIDEO_MSG, AUDIO} согласно декомпилу.
+  Future<Map<String, dynamic>> requestVideoUpload({
+    String type = 'VIDEO',
+    int count = 1,
+    String uploaderType = 'VIDEO',
+  }) async {
+    final f = await _request(MaxOp.videoUpload, {
+      'type': type,
+      'count': count,
+      'uploaderType': uploaderType,
+    });
+    if (f.cmd != 1) throw MaxError('videoUpload cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Универсальный аплоад файла (87). Поля payload не подтверждены в
+  /// декомпиле полностью — отправляем минимум.
+  Future<Map<String, dynamic>> requestFileUpload({int count = 1}) async {
+    final f = await _request(MaxOp.fileUpload, {'count': count});
+    if (f.cmd != 1) throw MaxError('fileUpload cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Получить URL воспроизведения видео (opcode 83).
+  Future<Map<String, dynamic>> requestVideoPlay({
+    required int videoId,
+    int? chatId,
+    int? messageId,
+    String? token,
+  }) async {
+    final payload = <String, Object?>{'videoId': videoId};
+    if (chatId != null) payload['chatId'] = chatId;
+    if (messageId != null) payload['messageId'] = messageId;
+    if (token != null) payload['token'] = token;
+    final f = await _request(MaxOp.videoPlay, payload);
+    if (f.cmd != 1) throw MaxError('videoPlay cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Получить download URL для файла (opcode 88).
+  Future<Map<String, dynamic>> requestFileDownload({
+    required int fileId,
+    required int chatId,
+    required int messageId,
+  }) async {
+    final f = await _request(MaxOp.fileDownload, {
+      'fileId': fileId,
+      'chatId': chatId,
+      'messageId': messageId,
+    });
+    if (f.cmd != 1) throw MaxError('fileDownload cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Список медиа конкретного чата (opcode 51). Используется для галереи.
+  Future<Map<String, dynamic>> chatMedia({
+    required int chatId,
+    int? messageId,
+    List<String> attachTypes = const ['PHOTO', 'VIDEO'],
+    int forward = 50,
+    int backward = 0,
+  }) async {
+    final payload = <String, Object?>{
+      'chatId': chatId,
+      'attachTypes': attachTypes,
+      'forward': forward,
+      'backward': backward,
+    };
+    if (messageId != null) payload['messageId'] = messageId;
+    final f = await _request(MaxOp.chatMedia, payload);
+    if (f.cmd != 1) throw MaxError('chatMedia cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
+  /// Запрос транскрипции голосового/видео-сообщения (opcode 202).
+  Future<Map<String, dynamic>> transcribeMedia({
+    required int mediaId,
+    required int chatId,
+    required int messageId,
+  }) async {
+    final f = await _request(MaxOp.transcribeMedia, {
+      'mediaId': mediaId,
+      'chatId': chatId,
+      'messageId': messageId,
+    });
+    if (f.cmd != 1) throw MaxError('transcribeMedia cmd=${f.cmd}');
+    return _asMap(f.decoded);
   }
 
   Future<Map<String, dynamic>> findContactByPhone(String phone) async {
@@ -396,6 +535,7 @@ class MaxClient {
     int? sender;
     int? msgId;
     int? timeMs;
+    var attaches = const <Map<String, dynamic>>[];
 
     final d = f.decoded;
     if (d is Map) {
@@ -408,6 +548,13 @@ class MaxClient {
         sender = _toInt(mm['sender']);
         msgId = _toInt(mm['id']);
         timeMs = _toInt(mm['time']);
+        final at = mm['attaches'] ?? mm['attachments'];
+        if (at is List) {
+          attaches = at
+              .whereType<Map>()
+              .map((e) => e.map((k, v) => MapEntry(k.toString(), v)))
+              .toList(growable: false);
+        }
       } else {
         text = dm['text']?.toString();
         sender = _toInt(dm['sender']);
@@ -437,14 +584,18 @@ class MaxClient {
       Uint8List.fromList([0xA4, ...'time'.codeUnits]),
     );
 
-    if (chatId == null || text == null || text.isEmpty) return null;
+    // Сообщение без текста, но с attach'ем — валидно.
+    if (chatId == null) return null;
+    final hasContent = (text != null && text.isNotEmpty) || attaches.isNotEmpty;
+    if (!hasContent) return null;
     return IncomingMessage(
       chatId: chatId,
       messageId: msgId,
       sender: sender,
-      text: text,
+      text: text ?? '',
       timeMs: timeMs,
       raw: f.body,
+      attaches: attaches,
     );
   }
 
