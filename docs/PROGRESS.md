@@ -135,13 +135,37 @@ Flutter создаёт symlinks для каталогов плагинов в `w
    - Артефакт: `build/app/outputs/flutter-apk/app-debug.apk`.
    - В Android Studio собственный Gradle-процесс не сталкивается с UDS-проблемой.
 
+### ✅ Запасной вариант: CLI standalone EXE
+
+Поскольку Flutter-сборки потребовали системных настроек на момент работы,
+собран альтернативный таргет — консольный клиент `bin/maxim_cli.dart`
+через `dart compile exe`. Использует тот же `MaxClient`, опкоды,
+протокол.
+
+```
+$ dart compile exe bin/maxim_cli.dart -o build/maxim_cli.exe
+Generated: build/maxim_cli.exe
+
+$ build/maxim_cli.exe --probe
+=== Maxim CLI (proto v10, app 26.11.0) ===
+Подключение к api.oneme.ru:443…
+OK, TLS-соединение установлено.
+probe OK — handshake выполнен, выхожу.
+Соединение закрыто.
+```
+
+Бинарь 6.2 МБ, AOT-компиляция, без Flutter-плагинов, без symlinks.
+Реальный smoke на боевом сервере прошёл: TLS+INIT (opcode 6) отрабатывают.
+Команды REPL: send/hist/find/me/quit.
+
 ### Состояние кода
 
 - 20/20 юнит-тестов зелёные (`flutter test`).
 - `flutter analyze` — 0 issues.
 - `flutter pub get` чистый.
 - Целевые платформы в `pubspec`/`flutter create`: Android + iOS + Windows.
-- Git: 7 коммитов на `master` (см. ниже).
+- Дополнительно: standalone CLI (`bin/maxim_cli.dart` → `build/maxim_cli.exe`).
+- Git: 9 коммитов на `master`.
 
 ```
 0c6acdf Phase 3: подготовка к сборке (Windows desktop + sqflite_ffi)
