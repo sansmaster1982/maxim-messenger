@@ -10,7 +10,7 @@ import '../../state/chats_controller.dart';
 /// Превью одного MaxAttach внутри пузыря сообщения. Поддерживает PHOTO,
 /// STICKER, VIDEO/VIDEO_MSG, AUDIO, FILE. Сетевые миниатюры кешируются
 /// через cached_network_image; локальный файл рисуется из Image.file.
-class AttachPreview extends ConsumerWidget {
+class AttachPreview extends ConsumerStatefulWidget {
   const AttachPreview({
     super.key,
     required this.attach,
@@ -22,11 +22,22 @@ class AttachPreview extends ConsumerWidget {
   final int chatId;
   final int? messageServerId;
 
+  @override
+  ConsumerState<AttachPreview> createState() => _AttachPreviewState();
+}
+
+class _AttachPreviewState extends ConsumerState<AttachPreview> {
   static const _previewWidth = 220.0;
   static const _radius = 8.0;
 
+  bool _transcribing = false;
+
+  MaxAttach get attach => widget.attach;
+  int get chatId => widget.chatId;
+  int? get messageServerId => widget.messageServerId;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isUploading = attach.status == MaxAttachStatus.uploading;
     final isDownloading = attach.status == MaxAttachStatus.downloading;
@@ -42,11 +53,14 @@ class AttachPreview extends ConsumerWidget {
 
     final body = switch (attach.type) {
       MaxAttachType.photo || MaxAttachType.sticker => _buildImage(),
-      MaxAttachType.video || MaxAttachType.videoMsg =>
-        _buildVideo(context, scheme),
+      MaxAttachType.video => _buildVideo(context, scheme),
+      MaxAttachType.videoMsg => _buildVideo(context, scheme),
       MaxAttachType.audio => _buildAudio(context, scheme),
-      MaxAttachType.file => _buildFile(context, ref, scheme),
+      MaxAttachType.file => _buildFile(context, scheme),
     };
+
+    final showTranscribe = attach.type == MaxAttachType.audio ||
+        attach.type == MaxAttachType.videoMsg;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(_radius),
@@ -58,11 +72,75 @@ class AttachPreview extends ConsumerWidget {
           children: [
             body,
             if (progressBar != null) progressBar,
+            if (showTranscribe) _transcribeBlock(scheme),
             if (isFailed) _failedBadge(scheme),
           ],
         ),
       ),
     );
+  }
+
+  Widget _transcribeBlock(ColorScheme scheme) {
+    final cached = attach.transcription;
+    if (cached != null && cached.isNotEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+        child: Text(
+          cached,
+          style: TextStyle(
+            color: scheme.onSurface,
+            fontSize: 13,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
+    final serverId = messageServerId;
+    final disabled = _transcribing || serverId == null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: disabled ? null : _runTranscribe,
+          icon: _transcribing
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.text_snippet_outlined, size: 16),
+          label: const Text('Расшифровать'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _runTranscribe() async {
+    final serverId = messageServerId;
+    if (serverId == null) return;
+    setState(() => _transcribing = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final text = await ref
+          .read(chatHistoryProvider(chatId).notifier)
+          .transcribeAttach(attach, serverId);
+      if (!mounted) return;
+      if (text == null || text.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Расшифровка пуста')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось расшифровать: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _transcribing = false);
+      }
+    }
   }
 
   Widget _placeholder({IconData icon = Icons.image_outlined}) {
@@ -195,7 +273,6 @@ class AttachPreview extends ConsumerWidget {
 
   Widget _buildFile(
     BuildContext context,
-    WidgetRef ref,
     ColorScheme scheme,
   ) {
     final name = (attach.fileName?.trim().isNotEmpty == true)

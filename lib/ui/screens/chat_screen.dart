@@ -7,6 +7,7 @@ import '../../state/chats_controller.dart';
 import '../widgets/chat_input.dart';
 import '../widgets/date_divider.dart';
 import '../widgets/message_bubble.dart';
+import 'media_gallery_screen.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.chatId, this.title});
@@ -76,6 +77,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _onMessageLongPress(MaxMessage m) async {
+    final canEdit =
+        m.direction == MessageDirection.outgoing && m.id != null;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -92,6 +95,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               title: const Text('Копировать'),
               onTap: () => Navigator.pop(ctx, 'copy'),
             ),
+            if (canEdit)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Редактировать'),
+                onTap: () => Navigator.pop(ctx, 'edit'),
+              ),
           ],
         ),
       ),
@@ -109,6 +118,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       setState(() => _replyTo = m);
     } else if (action == 'copy') {
       await _copyToClipboard(m.text);
+    } else if (action == 'edit') {
+      await _showEditDialog(m);
+    }
+  }
+
+  Future<void> _showEditDialog(MaxMessage m) async {
+    final messageId = m.id;
+    if (messageId == null) return;
+    final controller = TextEditingController(text: m.text);
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Редактировать'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: null,
+          decoration: const InputDecoration(
+            hintText: 'Новый текст',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (newText == null) return;
+    final trimmed = newText.trim();
+    if (trimmed.isEmpty || trimmed == m.text) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref
+          .read(chatHistoryProvider(widget.chatId).notifier)
+          .editMessage(messageId, trimmed);
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось отредактировать: $e')),
+      );
     }
   }
 
@@ -129,6 +184,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       appBar: AppBar(
         title: Text(widget.title ?? 'Чат ${widget.chatId}'),
         actions: [
+          IconButton(
+            tooltip: 'Медиа чата',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      MediaGalleryScreen(chatId: widget.chatId),
+                ),
+              );
+            },
+            icon: const Icon(Icons.collections_outlined),
+          ),
           IconButton(
             tooltip: 'Подтянуть с сервера',
             onPressed: () => ctrl.syncFromServer(),

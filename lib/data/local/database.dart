@@ -21,7 +21,7 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -56,6 +56,14 @@ class AppDatabase {
     if (oldVersion < 4) {
       await _createAttachmentsTable(db);
     }
+    if (oldVersion < 5) {
+      await db.execute(
+        'ALTER TABLE messages ADD COLUMN edited_at INTEGER',
+      );
+      await db.execute(
+        'ALTER TABLE attachments ADD COLUMN transcription TEXT',
+      );
+    }
   }
 
   static Future<void> _createAttachmentsTable(Database db) async {
@@ -79,7 +87,8 @@ class AppDatabase {
         thumbnail_url TEXT,
         file_name TEXT,
         progress REAL NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        transcription TEXT
       )
     ''');
     await db.execute('''
@@ -121,7 +130,8 @@ class AppDatabase {
         direction TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'sent',
         reply_to_id INTEGER,
-        reply_to_preview TEXT
+        reply_to_preview TEXT,
+        edited_at INTEGER
       )
     ''');
     await db.execute('''
@@ -320,6 +330,23 @@ class AppDatabase {
     );
   }
 
+  /// Применить редактирование (opcode 67) локально: меняем текст и время правки.
+  Future<void> updateMessageEdit(
+    int serverId,
+    String newText,
+    int editedAtMs,
+  ) async {
+    await _db.update(
+      'messages',
+      {
+        'text': newText,
+        'edited_at': editedAtMs,
+      },
+      where: 'id = ?',
+      whereArgs: [serverId],
+    );
+  }
+
   // ──────────────────────── contacts ───────────────────────
 
   Future<List<MaxContact>> contacts() async {
@@ -465,6 +492,16 @@ class AppDatabase {
         ..['message_server_id'] = messageServerId
         ..['chat_id'] = chatId
         ..['created_at'] = DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  /// Сохранить расшифровку (opcode 202) для attach'а по его rowId.
+  Future<void> setAttachTranscription(int rowId, String text) async {
+    await _db.update(
+      'attachments',
+      {'transcription': text},
+      where: 'rowid_pk = ?',
+      whereArgs: [rowId],
     );
   }
 
