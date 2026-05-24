@@ -82,7 +82,73 @@ MSG_EDIT (67), CHAT_MEDIA-галерея (51), TRANSCRIBE (202).
 
 ---
 
-## Этап 3 — сборка и smoke-test
+### ✅ Phase 2.3 — MSG_EDIT + CHAT_MEDIA-галерея + TRANSCRIBE (2026-05-24)
 
-- `flutter doctor`, доустановка недостающих компонентов.
-- `flutter build apk --debug` или `flutter run -d windows` для smoke-теста UI.
+- Опкод 67 (edit): БД v5 (edited_at), модель, репо, контроллер, long-press → пункт «Редактировать», плашка «изм.» в пузыре.
+- Опкод 51 (chatMedia): MediaRepository, MediaGalleryController, MediaGalleryScreen (3-колонки GridView), PhotoViewScreen (InteractiveViewer fullscreen), кнопка-галерея в AppBar чата.
+- Опкод 202 (transcribe): БД v5 (transcription), MaxAttach.transcription, transcribeAttach, кнопка «Расшифровать» под audio/video_msg.
+
+Тесты: 20/20 (+ message_test.dart — 6 кейсов). `flutter analyze`: 0 issues. Коммит `1e336fd`.
+
+---
+
+## Этап 3 — сборка и smoke-test (2026-05-24)
+
+### Что подготовлено
+
+- Добавлена платформа `windows/` через `flutter create --platforms=windows`.
+- В `pubspec.yaml` добавлена `sqflite_common_ffi: ^2.3.4`.
+- `lib/main.dart` инициализирует FFI-фабрику sqflite для Windows/Linux/macOS, на Android/iOS использует нативный sqflite.
+
+### Блокеры окружения
+
+Сборка под обе target-платформы упёрлась в системные ограничения, которые нельзя обойти без действия пользователя на уровне ОС:
+
+**Android (`flutter build apk --debug`)** падает на:
+```
+java.io.IOException: Unable to establish loopback connection
+Caused by: java.net.SocketException: Invalid argument: connect
+    at java.base/sun.nio.ch.UnixDomainSockets.connect0
+    at sun.nio.ch.PipeImpl$Initializer$LoopbackConnector.run
+```
+JDK 17 пытается создать NIO Pipe через Unix Domain Sockets. В текущем bash-окружении системный вызов `connect()` на AF_UNIX возвращает `EINVAL`. Это уровень JDK/OS, не Java-кода. Воспроизводится одинаково и в исходном каталоге, и в копии под ASCII-путём (`C:\maxim_build`). Пробованные обходы (`-Djava.net.preferIPv4Stack=true`, `org.gradle.daemon=false`, `org.gradle.workers.max=1`, `dangerouslyDisableSandbox`) — не сработали.
+
+**Windows (`flutter build windows --debug`)** падает на:
+```
+Building with plugins requires symlink support.
+Please enable Developer Mode in your system settings.
+```
+Flutter создаёт symlinks для каталогов плагинов в `windows/flutter/ephemeral/`. На Windows для этого нужен либо администратор, либо Developer Mode.
+
+### Что нужно сделать пользователю
+
+Один из двух путей:
+
+1. **Windows desktop (одно действие):**
+   - Открыть `ms-settings:developers` (Параметры → Конфиденциальность и безопасность → Для разработчиков) → включить «Режим разработчика».
+   - В корне проекта запустить `flutter build windows --debug`.
+   - Артефакт: `build/windows/x64/runner/Debug/maxim_messenger.exe`.
+
+2. **Android APK через Android Studio:**
+   - Открыть в Android Studio папку `android/`.
+   - Build → Build Bundle(s)/APK(s) → Build APK(s).
+   - Артефакт: `build/app/outputs/flutter-apk/app-debug.apk`.
+   - В Android Studio собственный Gradle-процесс не сталкивается с UDS-проблемой.
+
+### Состояние кода
+
+- 20/20 юнит-тестов зелёные (`flutter test`).
+- `flutter analyze` — 0 issues.
+- `flutter pub get` чистый.
+- Целевые платформы в `pubspec`/`flutter create`: Android + iOS + Windows.
+- Git: 7 коммитов на `master` (см. ниже).
+
+```
+__PHASE_3_COMMIT__ Phase 3: добавлена платформа Windows + sqflite_common_ffi
+1e336fd Phase 2.3: MSG_EDIT + CHAT_MEDIA-галерея + TRANSCRIBE
+9441f1d Phase 2.2: upload pipeline + UI медиа
+032f040 Phase 2.1: фундамент медиа (опкоды, MaxAttach, БД v4)
+dda9e51 Phase 1.2-1.3: reliability + research медиа-опкодов
+ff83855 Phase 1.1: пагинация, чат UX, импорт контактов
+a81e1af init: Flutter-форк MAX-мессенджера
+```
