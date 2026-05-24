@@ -20,7 +20,7 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -40,6 +40,17 @@ class AppDatabase {
       await db.execute(
         'ALTER TABLE messages ADD COLUMN reply_to_preview TEXT',
       );
+    }
+    if (oldVersion < 3) {
+      await db.execute('''
+        CREATE TABLE outbox (
+          local_id TEXT PRIMARY KEY,
+          chat_id INTEGER NOT NULL,
+          text TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
     }
   }
 
@@ -96,6 +107,16 @@ class AppDatabase {
       CREATE TABLE processed_message_ids (
         id INTEGER PRIMARY KEY,
         seen_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE outbox (
+        local_id TEXT PRIMARY KEY,
+        chat_id INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0
       )
     ''');
   }
@@ -301,10 +322,60 @@ class AppDatabase {
     );
   }
 
+  // ──────────────────────── outbox ─────────────────────────
+
+  /// Положить исходящее сообщение в очередь для отправки при появлении сети.
+  Future<void> enqueueOutbox({
+    required String localId,
+    required int chatId,
+    required String text,
+  }) async {
+    await _db.insert(
+      'outbox',
+      {
+        'local_id': localId,
+        'chat_id': chatId,
+        'text': text,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'attempts': 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Все pending-записи в очереди отправки, в порядке появления.
+  Future<List<Map<String, Object?>>> dequeueOutbox() async {
+    return _db.query('outbox', orderBy: 'created_at ASC');
+  }
+
+  Future<void> removeOutbox(String localId) async {
+    await _db.delete('outbox', where: 'local_id = ?', whereArgs: [localId]);
+  }
+
+  Future<void> incOutboxAttempts(String localId) async {
+    await _db.rawUpdate(
+      'UPDATE outbox SET attempts = attempts + 1 WHERE local_id = ?',
+      [localId],
+    );
+  }
+
+  /// Сообщения определённого чата со статусом [status]. Используется
+  /// для ручного retry «не отправленных» из UI.
+  Future<List<MaxMessage>> messagesByStatus(int chatId, MessageStatus status) async {
+    final rows = await _db.query(
+      'messages',
+      where: 'chat_id = ? AND status = ?',
+      whereArgs: [chatId, status.name],
+      orderBy: 'time_ms ASC',
+    );
+    return rows.map(MaxMessage.fromDbRow).toList();
+  }
+
   Future<void> wipe() async {
     await _db.delete('messages');
     await _db.delete('chats');
     await _db.delete('contacts');
     await _db.delete('processed_message_ids');
+    await _db.delete('outbox');
   }
 }

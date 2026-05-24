@@ -14,15 +14,21 @@ import 'raw_parsers.dart';
 /// Колбэк для отладки push-фреймов (как `on_push_debug` в Python-версии).
 typedef PushDebug = void Function(MaxFrame frame);
 
+/// Состояние транспортного соединения. На него подписывается UI и репозитории.
+enum MaxConnectionState { disconnected, connecting, connected, reconnecting }
+
 /// Один MaxClient = одно TLS-соединение к api.oneme.ru:443 + один читающий
 /// сабскрипшен. Запросы идут через [_request], ответы матчатся по seq.
 /// Сервер-пуш сваливается в [incomingStream].
 class MaxClient {
   MaxClient({this.onPushDebug, Logger? logger})
-    : _log = logger ?? Logger(printer: PrettyPrinter(methodCount: 0));
+    : _log = logger ?? Logger(printer: PrettyPrinter(methodCount: 0)) {
+    _reconnect = _ReconnectManager(this, _log);
+  }
 
   final PushDebug? onPushDebug;
   final Logger _log;
+  late final _ReconnectManager _reconnect;
 
   String? _token;
   String get deviceId => _deviceId;
@@ -34,39 +40,75 @@ class MaxClient {
   bool _closed = false;
   final _pending = <int, Completer<MaxFrame>>{};
   final _pushCtrl = StreamController<IncomingMessage>.broadcast();
+  final _stateCtrl = StreamController<MaxConnectionState>.broadcast();
+  MaxConnectionState _state = MaxConnectionState.disconnected;
   final _bufferBuilder = BytesBuilder(copy: false);
 
   Stream<IncomingMessage> get incomingStream => _pushCtrl.stream;
+  Stream<MaxConnectionState> get connectionState => _stateCtrl.stream;
+  MaxConnectionState get currentState => _state;
   String? get token => _token;
   bool get isConnected => _socket != null && !_closed;
 
-  Future<void> connect() async {
-    final s = await SecureSocket.connect(
-      MaxProto.host,
-      MaxProto.port,
-      timeout: const Duration(seconds: 15),
-    );
-    s.setOption(SocketOption.tcpNoDelay, true);
-    _socket = s;
-    _closed = false;
-    _sub = s.listen(
-      _onData,
-      onError: _onError,
-      onDone: _onDone,
-      cancelOnError: false,
-    );
-    await _initSession();
+  void _emitState(MaxConnectionState s) {
+    if (_state == s) return;
+    _state = s;
+    if (!_stateCtrl.isClosed) _stateCtrl.add(s);
   }
 
-  Future<void> close() async {
-    _closed = true;
+  Future<void> connect() async {
+    _emitState(MaxConnectionState.connecting);
+    try {
+      final s = await SecureSocket.connect(
+        MaxProto.host,
+        MaxProto.port,
+        timeout: const Duration(seconds: 15),
+      );
+      s.setOption(SocketOption.tcpNoDelay, true);
+      _socket = s;
+      _closed = false;
+      _sub = s.listen(
+        _onData,
+        onError: _onError,
+        onDone: _onDone,
+        cancelOnError: false,
+      );
+      await _initSession();
+      _emitState(MaxConnectionState.connected);
+    } catch (e) {
+      _emitState(MaxConnectionState.disconnected);
+      rethrow;
+    }
+  }
+
+  /// Переподключение по сохранённому токену. Не выставляет [_closed].
+  /// Если [_token] не задан — это голый [connect].
+  Future<void> reconnect() async {
+    await _disconnect();
+    await connect();
+    final t = _token;
+    if (t != null && t.isNotEmpty) {
+      await login(t);
+    }
+  }
+
+  /// Закрытие сокета без флага «навсегда» — для авто-переподключения.
+  Future<void> _disconnect() async {
     await _sub?.cancel();
     _sub = null;
     try {
       await _socket?.close();
     } catch (_) {}
     _socket = null;
-    _failAllPending(const MaxNotConnected('closed by client'));
+    _failAllPending(const MaxNotConnected('disconnected'));
+  }
+
+  /// Явное закрытие пользователем. Блокирует все будущие reconnect-попытки.
+  Future<void> close() async {
+    _closed = true;
+    _reconnect.cancel();
+    await _disconnect();
+    _emitState(MaxConnectionState.disconnected);
   }
 
   Future<void> _initSession() async {
@@ -307,12 +349,29 @@ class MaxClient {
   void _onError(Object e, StackTrace st) {
     _log.w('MaxClient socket error: $e');
     _failAllPending(MaxNotConnected('socket error: $e'));
+    _handleDrop();
   }
 
   void _onDone() {
     _log.w('MaxClient socket closed by server');
     _failAllPending(const MaxNotConnected('socket closed'));
-    _closed = true;
+    _handleDrop();
+  }
+
+  void _handleDrop() {
+    // Уже синхронно убираем подписку и сокет — без флага «навсегда».
+    unawaited(_sub?.cancel() ?? Future<void>.value());
+    _sub = null;
+    try {
+      _socket?.destroy();
+    } catch (_) {}
+    _socket = null;
+    if (_closed) {
+      _emitState(MaxConnectionState.disconnected);
+      return;
+    }
+    _emitState(MaxConnectionState.reconnecting);
+    _reconnect.start();
   }
 
   void _failAllPending(Object error) {
@@ -474,5 +533,69 @@ class MaxClient {
     if (v is int) return v;
     if (v is num) return v.toInt();
     return int.tryParse(v.toString());
+  }
+}
+
+/// Экспоненциальный backoff: 2s → 4s → 8s → 16s → 32s → 60s (cap).
+/// При успехе сбрасывается в 2s. Защищён от двойного запуска флагом
+/// [_running].
+class _ReconnectManager {
+  _ReconnectManager(this._client, this._log);
+
+  final MaxClient _client;
+  final Logger _log;
+
+  static const _baseDelay = Duration(seconds: 2);
+  static const _maxDelay = Duration(seconds: 60);
+
+  Duration _delay = _baseDelay;
+  bool _running = false;
+  bool _cancelled = false;
+  Timer? _timer;
+
+  /// Запускает цикл переподключения, если он ещё не запущен.
+  void start() {
+    if (_running || _cancelled) return;
+    if (_client._closed) return;
+    _running = true;
+    _delay = _baseDelay;
+    _schedule();
+  }
+
+  /// Останавливает цикл. Вызывается из [MaxClient.close].
+  void cancel() {
+    _cancelled = true;
+    _running = false;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void _schedule() {
+    _timer?.cancel();
+    _log.i('reconnect scheduled in ${_delay.inSeconds}s');
+    _timer = Timer(_delay, _attempt);
+  }
+
+  Future<void> _attempt() async {
+    if (_cancelled || _client._closed) {
+      _running = false;
+      return;
+    }
+    try {
+      await _client.reconnect();
+      _log.i('reconnect succeeded');
+      _delay = _baseDelay;
+      _running = false;
+    } catch (e) {
+      _log.w('reconnect attempt failed: $e');
+      // Удваиваем, но не больше cap.
+      final next = _delay * 2;
+      _delay = next > _maxDelay ? _maxDelay : next;
+      if (!_cancelled && !_client._closed) {
+        _schedule();
+      } else {
+        _running = false;
+      }
+    }
   }
 }

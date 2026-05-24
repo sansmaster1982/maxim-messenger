@@ -114,6 +114,13 @@ class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
     final repo = await ref.read(messagesRepositoryProvider.future);
     await repo.sendTyping(_chatId, active: active);
   }
+
+  /// Повторить отправку всех failed-сообщений этого чата. Дёргает дренаж
+  /// outbox в фоне.
+  Future<void> retryFailed() async {
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    await repo.retryFailed(_chatId);
+  }
 }
 
 final chatHistoryProvider = AsyncNotifierProvider.family<

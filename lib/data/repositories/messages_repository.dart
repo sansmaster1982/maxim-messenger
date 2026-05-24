@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../core/errors.dart';
 import '../local/database.dart';
 import '../local/secure_storage.dart';
 import '../max/max_client.dart';
@@ -22,8 +23,11 @@ class MessagesRepository {
   final SecureStorage storage;
   final Logger _log;
   static const _uuid = Uuid();
+  static const _maxAttempts = 5;
 
   StreamSubscription<IncomingMessage>? _pushSub;
+  StreamSubscription<MaxConnectionState>? _stateSub;
+  bool _draining = false;
   final _onChat = StreamController<int>.broadcast();
 
   /// Поток id чатов, в которых что-то изменилось.
@@ -33,11 +37,25 @@ class MessagesRepository {
     _pushSub ??= client.incomingStream.listen(_onPush, onError: (e) {
       _log.w('push stream error: $e');
     });
+    // Подписываемся на состояние транспорта — при выходе в connected
+    // дренируем outbox. Установка подписки не блокирует репозиторий.
+    _stateSub ??= client.connectionState.listen((s) {
+      if (s == MaxConnectionState.connected) {
+        // Откладываем дренаж, чтобы не блокировать listen.
+        Future.microtask(drainOutbox);
+      }
+    });
+    // Если на момент start транспорт уже connected — дренаж тоже отложенный.
+    if (client.currentState == MaxConnectionState.connected) {
+      Future.microtask(drainOutbox);
+    }
   }
 
   Future<void> stop() async {
     await _pushSub?.cancel();
     _pushSub = null;
+    await _stateSub?.cancel();
+    _stateSub = null;
   }
 
   Future<List<MaxMessage>> localHistory(int chatId, {int limit = 200}) =>
@@ -149,12 +167,96 @@ class MessagesRepository {
       );
       _onChat.add(chatId);
       return pending.copyWith(id: serverId, status: MessageStatus.sent);
+    } on MaxNotConnected catch (e) {
+      _log.i('sendText offline, queued: $e');
+      await db.enqueueOutbox(localId: localId, chatId: chatId, text: text);
+      _onChat.add(chatId);
+      return pending;
+    } on MaxTimeout catch (e) {
+      _log.i('sendText timeout, queued: $e');
+      await db.enqueueOutbox(localId: localId, chatId: chatId, text: text);
+      _onChat.add(chatId);
+      return pending;
     } catch (e) {
       _log.w('sendText failed: $e');
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
       _onChat.add(chatId);
       return pending.copyWith(status: MessageStatus.failed);
     }
+  }
+
+  /// Пытается отправить все сообщения из outbox по порядку. При первом фейле
+  /// останавливается — следующий successful reconnect повторит. Если конкретное
+  /// сообщение превысило лимит попыток, помечается как failed и убирается из
+  /// очереди.
+  Future<void> drainOutbox() async {
+    if (_draining) return;
+    _draining = true;
+    try {
+      final rows = await db.dequeueOutbox();
+      for (final row in rows) {
+        final localId = row['local_id'] as String;
+        final chatId = (row['chat_id'] as num).toInt();
+        final text = row['text'] as String;
+        final attempts = (row['attempts'] as num?)?.toInt() ?? 0;
+        try {
+          final res = await client.sendMessage(chatId, text);
+          final serverId = (res['message'] is Map)
+              ? ((res['message'] as Map)['id'] as num?)?.toInt()
+              : null;
+          await db.updateMessageByLocalId(
+            localId,
+            serverId: serverId,
+            status: MessageStatus.sent,
+          );
+          await db.removeOutbox(localId);
+          _onChat.add(chatId);
+        } on MaxNotConnected catch (e) {
+          _log.i('drainOutbox stopped, offline again: $e');
+          await db.incOutboxAttempts(localId);
+          return;
+        } on MaxTimeout catch (e) {
+          _log.i('drainOutbox stopped, timeout: $e');
+          await db.incOutboxAttempts(localId);
+          return;
+        } catch (e) {
+          _log.w('drainOutbox send failed: $e');
+          await db.incOutboxAttempts(localId);
+          if (attempts + 1 > _maxAttempts) {
+            await db.updateMessageByLocalId(
+              localId,
+              status: MessageStatus.failed,
+            );
+            await db.removeOutbox(localId);
+            _onChat.add(chatId);
+          }
+          // Останавливаемся, не дергаем следующее — попробуем при следующем reconnect.
+          return;
+        }
+      }
+    } finally {
+      _draining = false;
+    }
+  }
+
+  /// Сбросить failed-сообщения чата в pending и положить обратно в outbox,
+  /// затем дёрнуть [drainOutbox]. Используется тапом «повторить» в UI.
+  Future<void> retryFailed(int chatId) async {
+    final failed = await db.messagesByStatus(chatId, MessageStatus.failed);
+    for (final m in failed) {
+      final localId = m.localId;
+      if (localId == null) continue;
+      await db.enqueueOutbox(
+        localId: localId,
+        chatId: chatId,
+        text: m.text,
+      );
+      await db.updateMessageByLocalId(localId, status: MessageStatus.pending);
+    }
+    if (failed.isNotEmpty) {
+      _onChat.add(chatId);
+    }
+    unawaited(drainOutbox());
   }
 
   /// Отправить статус «печатает». При оборванном сокете молча проглатывает.

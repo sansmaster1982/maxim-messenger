@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../data/max/models/chat.dart';
 import '../../state/chats_controller.dart';
+import '../widgets/connection_banner.dart';
 import 'chat_screen.dart';
 import 'contacts_screen.dart';
 import 'settings_screen.dart';
@@ -34,47 +35,54 @@ class ChatsListScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: chatsAsync.when(
-        data: (chats) {
-          if (chats.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Чатов пока нет. Открой раздел контактов '
-                      'и добавь собеседника по номеру телефона.',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 16),
-                    FilledButton.icon(
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const ContactsScreen(),
-                        ),
+      body: Column(
+        children: [
+          const ConnectionBanner(),
+          Expanded(
+            child: chatsAsync.when(
+              data: (chats) {
+                if (chats.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Чатов пока нет. Открой раздел контактов '
+                            'и добавь собеседника по номеру телефона.',
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ContactsScreen(),
+                              ),
+                            ),
+                            icon: const Icon(Icons.person_add_alt),
+                            label: const Text('К контактам'),
+                          ),
+                        ],
                       ),
-                      icon: const Icon(Icons.person_add_alt),
-                      label: const Text('К контактам'),
                     ),
-                  ],
-                ),
-              ),
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: () =>
-                ref.read(chatsListProvider.notifier).refresh(),
-            child: ListView.separated(
-              itemCount: chats.length,
-              separatorBuilder: (_, __) => const Divider(height: 0),
-              itemBuilder: (_, i) => _ChatTile(chat: chats[i]),
+                  );
+                }
+                return RefreshIndicator(
+                  onRefresh: () =>
+                      ref.read(chatsListProvider.notifier).refresh(),
+                  child: ListView.separated(
+                    itemCount: chats.length,
+                    separatorBuilder: (_, __) => const Divider(height: 0),
+                    itemBuilder: (_, i) => _ChatTile(chat: chats[i]),
+                  ),
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => Center(child: Text('Ошибка: $e')),
             ),
-          );
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Ошибка: $e')),
+          ),
+        ],
       ),
     );
   }

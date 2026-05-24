@@ -223,7 +223,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             final m = it.message!;
             return GestureDetector(
               onLongPress: () => _onMessageLongPress(m),
-              child: MessageBubble(message: m),
+              child: MessageBubble(
+                message: m,
+                onRetry: m.status == MessageStatus.failed
+                    ? () => ref
+                        .read(chatHistoryProvider(widget.chatId).notifier)
+                        .retryFailed()
+                    : null,
+              ),
             );
         }
       },
