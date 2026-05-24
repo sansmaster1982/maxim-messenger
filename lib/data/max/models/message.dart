@@ -16,6 +16,13 @@ class MaxMessage extends Equatable {
   /// Локальный id, который пригодится пока сервер не вернул свой.
   final String? localId;
 
+  /// id сообщения, на которое отвечаем (если это reply).
+  final int? replyToId;
+
+  /// Короткий превью-текст того сообщения, чтобы рисовать в пузыре без
+  /// дополнительного запроса в БД.
+  final String? replyToPreview;
+
   const MaxMessage({
     required this.chatId,
     required this.text,
@@ -25,6 +32,8 @@ class MaxMessage extends Equatable {
     this.senderId,
     this.status = MessageStatus.sent,
     this.localId,
+    this.replyToId,
+    this.replyToPreview,
   });
 
   MaxMessage copyWith({
@@ -32,6 +41,8 @@ class MaxMessage extends Equatable {
     MessageStatus? status,
     String? text,
     int? timeMs,
+    int? replyToId,
+    String? replyToPreview,
   }) {
     return MaxMessage(
       id: id ?? this.id,
@@ -42,6 +53,8 @@ class MaxMessage extends Equatable {
       direction: direction,
       status: status ?? this.status,
       localId: localId,
+      replyToId: replyToId ?? this.replyToId,
+      replyToPreview: replyToPreview ?? this.replyToPreview,
     );
   }
 
@@ -54,6 +67,8 @@ class MaxMessage extends Equatable {
     'time_ms': timeMs,
     'direction': direction.name,
     'status': status.name,
+    'reply_to_id': replyToId,
+    'reply_to_preview': replyToPreview,
   };
 
   factory MaxMessage.fromDbRow(Map<String, Object?> r) => MaxMessage(
@@ -71,6 +86,8 @@ class MaxMessage extends Equatable {
       (s) => s.name == (r['status'] as String?),
       orElse: () => MessageStatus.sent,
     ),
+    replyToId: r['reply_to_id'] as int?,
+    replyToPreview: r['reply_to_preview'] as String?,
   );
 
   @override
@@ -83,5 +100,7 @@ class MaxMessage extends Equatable {
     timeMs,
     direction,
     status,
+    replyToId,
+    replyToPreview,
   ];
 }

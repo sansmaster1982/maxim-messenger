@@ -45,8 +45,34 @@ class MessagesRepository {
 
   /// Подтянуть N последних сообщений с сервера и сохранить локально.
   Future<List<MaxMessage>> syncHistory(int chatId, {int count = 50}) async {
+    return _fetchAndStore(chatId, fromId: 0, count: count, updatePreview: true);
+  }
+
+  /// Догрузить более старые сообщения от самого раннего локально известного id.
+  /// Возвращает то, что удалось вытащить (может быть пусто, если на сервере
+  /// больше ничего нет или соединение мертвое).
+  Future<List<MaxMessage>> loadOlder(int chatId, {int count = 50}) async {
+    final oldest = await db.oldestServerMessageId(chatId);
+    if (oldest == null) {
+      // локально пусто — нечего пагинировать, имеет смысл только обычный sync
+      return _fetchAndStore(chatId, fromId: 0, count: count, updatePreview: true);
+    }
+    return _fetchAndStore(
+      chatId,
+      fromId: oldest,
+      count: count,
+      updatePreview: false,
+    );
+  }
+
+  Future<List<MaxMessage>> _fetchAndStore(
+    int chatId, {
+    required int fromId,
+    required int count,
+    required bool updatePreview,
+  }) async {
     final myId = await storage.readMyUserId();
-    final raw = await client.chatHistory(chatId, count: count);
+    final raw = await client.chatHistory(chatId, fromId: fromId, count: count);
     final out = <MaxMessage>[];
     for (final m in raw) {
       final id = (m['id'] as num?)?.toInt();
@@ -70,18 +96,25 @@ class MessagesRepository {
       out.add(msg);
     }
     if (out.isNotEmpty) {
-      final last = out.reduce((a, b) => a.timeMs > b.timeMs ? a : b);
-      await db.updateChatPreview(
-        chatId: chatId,
-        timeMs: last.timeMs,
-        preview: last.text,
-      );
+      if (updatePreview) {
+        final last = out.reduce((a, b) => a.timeMs > b.timeMs ? a : b);
+        await db.updateChatPreview(
+          chatId: chatId,
+          timeMs: last.timeMs,
+          preview: last.text,
+        );
+      }
       _onChat.add(chatId);
     }
     return out;
   }
 
-  Future<MaxMessage> sendText(int chatId, String text) async {
+  Future<MaxMessage> sendText(
+    int chatId,
+    String text, {
+    int? replyToId,
+    String? replyToPreview,
+  }) async {
     final myId = await storage.readMyUserId();
     final localId = _uuid.v4();
     final pending = MaxMessage(
@@ -92,6 +125,8 @@ class MessagesRepository {
       direction: MessageDirection.outgoing,
       status: MessageStatus.pending,
       localId: localId,
+      replyToId: replyToId,
+      replyToPreview: replyToPreview,
     );
     await db.insertMessage(pending);
     await db.updateChatPreview(
@@ -102,6 +137,7 @@ class MessagesRepository {
     _onChat.add(chatId);
 
     try {
+      // TODO: ключ reply в payload sendMessage MAX неизвестен; шлём только текст.
       final res = await client.sendMessage(chatId, text);
       final serverId = (res['message'] is Map)
           ? ((res['message'] as Map)['id'] as num?)?.toInt()
@@ -118,6 +154,15 @@ class MessagesRepository {
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
       _onChat.add(chatId);
       return pending.copyWith(status: MessageStatus.failed);
+    }
+  }
+
+  /// Отправить статус «печатает». При оборванном сокете молча проглатывает.
+  Future<void> sendTyping(int chatId, {bool active = true}) async {
+    try {
+      await client.typing(chatId, isTyping: active);
+    } catch (e) {
+      _log.d('typing swallowed: $e');
     }
   }
 

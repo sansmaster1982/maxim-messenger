@@ -14,6 +14,7 @@ class MessageBubble extends StatelessWidget {
     final bg = isOut ? scheme.primaryContainer : scheme.surfaceContainerHighest;
     final fg = isOut ? scheme.onPrimaryContainer : scheme.onSurface;
     final time = DateTime.fromMillisecondsSinceEpoch(message.timeMs);
+    final hasReply = message.replyToId != null;
     return Align(
       alignment: isOut ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -35,6 +36,7 @@ class MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (hasReply) _replyBlock(fg),
             Text(message.text, style: TextStyle(color: fg)),
             const SizedBox(height: 2),
             Row(
@@ -58,6 +60,34 @@ class MessageBubble extends StatelessWidget {
               ],
             )
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _replyBlock(Color fg) {
+    final preview = message.replyToPreview?.trim();
+    final label = (preview == null || preview.isEmpty)
+        ? 'Сообщение'
+        : preview.length > 80
+            ? '${preview.substring(0, 80)}...'
+            : preview;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: fg.withValues(alpha: 0.6), width: 3),
+        ),
+      ),
+      child: Text(
+        label,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 12,
+          color: fg.withValues(alpha: 0.8),
+          fontStyle: FontStyle.italic,
         ),
       ),
     );
