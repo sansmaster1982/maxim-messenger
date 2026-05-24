@@ -71,6 +71,10 @@ class MaxAttach extends Equatable {
   /// 0..1 — прогресс upload/download.
   final double progress;
 
+  /// Расшифровка голосового/видео-сообщения, полученная по opcode 202.
+  /// null = ещё не запрашивалась или сервер не вернул текст.
+  final String? transcription;
+
   const MaxAttach({
     required this.type,
     this.status = MaxAttachStatus.idle,
@@ -87,6 +91,7 @@ class MaxAttach extends Equatable {
     this.thumbnailUrl,
     this.fileName,
     this.progress = 0,
+    this.transcription,
   });
 
   MaxAttach copyWith({
@@ -104,6 +109,7 @@ class MaxAttach extends Equatable {
     String? thumbnailUrl,
     String? fileName,
     double? progress,
+    String? transcription,
   }) {
     return MaxAttach(
       type: type,
@@ -121,6 +127,7 @@ class MaxAttach extends Equatable {
       thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       fileName: fileName ?? this.fileName,
       progress: progress ?? this.progress,
+      transcription: transcription ?? this.transcription,
     );
   }
 
@@ -156,6 +163,7 @@ class MaxAttach extends Equatable {
     'thumbnail_url': thumbnailUrl,
     'file_name': fileName,
     'progress': progress,
+    'transcription': transcription,
   };
 
   factory MaxAttach.fromDbRow(Map<String, Object?> r) {
@@ -180,6 +188,7 @@ class MaxAttach extends Equatable {
       thumbnailUrl: r['thumbnail_url'] as String?,
       fileName: r['file_name'] as String?,
       progress: (r['progress'] as num?)?.toDouble() ?? 0,
+      transcription: r['transcription'] as String?,
     );
   }
 
@@ -219,5 +228,6 @@ class MaxAttach extends Equatable {
     thumbnailUrl,
     fileName,
     progress,
+    transcription,
   ];
 }

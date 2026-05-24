@@ -7,6 +7,7 @@ import '../data/max/max_client.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/chats_repository.dart';
 import '../data/repositories/contacts_repository.dart';
+import '../data/repositories/media_repository.dart';
 import '../data/repositories/messages_repository.dart';
 import '../data/repositories/upload_repository.dart';
 
@@ -76,5 +77,14 @@ final contactsRepositoryProvider = FutureProvider<ContactsRepository>((ref) asyn
   return ContactsRepository(
     client: ref.watch(maxClientProvider),
     db: db,
+  );
+});
+
+final mediaRepositoryProvider = FutureProvider<MediaRepository>((ref) async {
+  final db = await ref.watch(appDatabaseProvider.future);
+  return MediaRepository(
+    client: ref.watch(maxClientProvider),
+    db: db,
+    logger: ref.watch(loggerProvider),
   );
 });

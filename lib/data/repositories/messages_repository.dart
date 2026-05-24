@@ -570,6 +570,70 @@ class MessagesRepository {
     }
   }
 
+  /// Редактирование сообщения (opcode 67). Возвращает свежий [MaxMessage]
+  /// из локальной БД после успешной правки или null, если сообщения нет
+  /// в локальной таблице.
+  Future<MaxMessage?> editMessage(
+    int chatId,
+    int messageId,
+    String newText,
+  ) async {
+    final existing = await db.messageById(messageId);
+    if (existing == null) {
+      _log.w('editMessage: message $messageId not found locally');
+      return null;
+    }
+    try {
+      await client.editMessage(chatId, messageId, newText);
+    } catch (e) {
+      _log.w('editMessage failed: $e');
+      rethrow;
+    }
+    final editedAt = DateTime.now().millisecondsSinceEpoch;
+    await db.updateMessageEdit(messageId, newText, editedAt);
+    _onChat.add(chatId);
+    return db.messageById(messageId);
+  }
+
+  /// Запросить расшифровку у сервера (opcode 202) и закешировать. Если
+  /// transcription уже есть — возвращается без обращения к сети.
+  Future<String?> transcribeAttach(
+    MaxAttach a, {
+    required int chatId,
+    required int messageId,
+  }) async {
+    final cached = a.transcription;
+    if (cached != null && cached.isNotEmpty) return cached;
+    final fileId = a.fileId;
+    if (fileId == null) return null;
+    final Map<String, dynamic> res;
+    try {
+      res = await client.transcribeMedia(
+        mediaId: fileId,
+        chatId: chatId,
+        messageId: messageId,
+      );
+    } catch (e) {
+      _log.w('transcribeMedia failed: $e');
+      return null;
+    }
+    String? text = res['text']?.toString();
+    text ??= res['transcription']?.toString();
+    if (text == null) {
+      final result = res['result'];
+      if (result is Map) {
+        text = result['text']?.toString();
+      }
+    }
+    if (text == null || text.isEmpty) return null;
+    final rowId = a.rowId;
+    if (rowId != null) {
+      await db.setAttachTranscription(rowId, text);
+      _onChat.add(chatId);
+    }
+    return text;
+  }
+
   /// Сбросить failed-сообщения чата в pending и положить обратно в outbox,
   /// затем дёрнуть [drainOutbox]. Используется тапом «повторить» в UI.
   Future<void> retryFailed(int chatId) async {

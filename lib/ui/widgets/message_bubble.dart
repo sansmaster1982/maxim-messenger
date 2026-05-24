@@ -78,6 +78,17 @@ class MessageBubble extends StatelessWidget {
                     color: fg.withValues(alpha: 0.7),
                   ),
                 ),
+                if (message.editedAtMs != null) ...[
+                  const SizedBox(width: 4),
+                  Text(
+                    'изм.',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: fg.withValues(alpha: 0.7),
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ],
                 if (isOut) ...[
                   const SizedBox(width: 4),
                   if (isFailed && onRetry != null)

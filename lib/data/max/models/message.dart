@@ -29,6 +29,9 @@ class MaxMessage extends Equatable {
   /// подгружаются репозиторием. В `toMap`/`fromDbRow` НЕ участвуют.
   final List<MaxAttach> attaches;
 
+  /// Метка времени последней правки (opcode 67). null = сообщение не редактировалось.
+  final int? editedAtMs;
+
   const MaxMessage({
     required this.chatId,
     required this.text,
@@ -41,6 +44,7 @@ class MaxMessage extends Equatable {
     this.replyToId,
     this.replyToPreview,
     this.attaches = const [],
+    this.editedAtMs,
   });
 
   MaxMessage copyWith({
@@ -51,6 +55,7 @@ class MaxMessage extends Equatable {
     int? replyToId,
     String? replyToPreview,
     List<MaxAttach>? attaches,
+    int? editedAtMs,
   }) {
     return MaxMessage(
       id: id ?? this.id,
@@ -64,6 +69,7 @@ class MaxMessage extends Equatable {
       replyToId: replyToId ?? this.replyToId,
       replyToPreview: replyToPreview ?? this.replyToPreview,
       attaches: attaches ?? this.attaches,
+      editedAtMs: editedAtMs ?? this.editedAtMs,
     );
   }
 
@@ -80,6 +86,7 @@ class MaxMessage extends Equatable {
     'status': status.name,
     'reply_to_id': replyToId,
     'reply_to_preview': replyToPreview,
+    'edited_at': editedAtMs,
   };
 
   factory MaxMessage.fromDbRow(Map<String, Object?> r) => MaxMessage(
@@ -99,6 +106,7 @@ class MaxMessage extends Equatable {
     ),
     replyToId: r['reply_to_id'] as int?,
     replyToPreview: r['reply_to_preview'] as String?,
+    editedAtMs: (r['edited_at'] as num?)?.toInt(),
   );
 
   @override
@@ -114,5 +122,6 @@ class MaxMessage extends Equatable {
     replyToId,
     replyToPreview,
     attaches,
+    editedAtMs,
   ];
 }

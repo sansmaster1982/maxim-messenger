@@ -68,12 +68,15 @@
 Тесты: 7/7 (новый `attach_test.dart` — 4 case).
 `flutter analyze`: 0 issues.
 
-### ⏳ Phase 2.2 — Upload pipeline + UI медиа
+### ✅ Phase 2.2 — Upload pipeline + UI медиа (2026-05-24)
 
-- **Agent E (2.2A)**: HTTP POST файла на upload-URL, прогресс, retry, привязка token к message.attaches при отправке.
-- **Agent F (2.2B)**: image_picker/file_picker, рендер attach-пузырей, прогресс upload в UI, download по opcode 88 в кеш.
+**Agent E (upload):** http ^1.2.2, mime ^2.0.0. `UploadInput.fromPath` определяет тип по mime. `UploadRepository.upload`: opcode 80/82/87 → upload URL → multipart HTTP POST → token. Прогресс 0→0.1→0.3→0.7→1.0. `MessagesRepository.sendMedia` создаёт pending msg, аплоадит attach'и один за другим, шлёт sendMessage(64) с `attaches`.
 
-### Phase 2.3 — расширенные функции
+**Agent F (UI):** `AttachPicker.show` — bottom sheet с 5 опциями (фото/видео галерея, камера, файл). `AttachPreview` рисует attach по типу с прогресс-баром. `MessageBubble` показывает attaches над текстом. `downloadAttach` стримит файл через opcode 88/83 в `documents/maxim_media/`.
+
+Тесты: 14/14 (`upload_input_test` — 7 case). `flutter analyze`: 0 issues. Коммит `9441f1d`.
+
+### ⏳ Phase 2.3 — расширенные функции
 
 MSG_EDIT (67), CHAT_MEDIA-галерея (51), TRANSCRIBE (202).
 

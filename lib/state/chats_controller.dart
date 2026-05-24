@@ -156,6 +156,25 @@ class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
     }
     return path;
   }
+
+  /// Редактирование уже отправленного сообщения (opcode 67). Контроллер
+  /// после успеха дёргает [_reload] — UI увидит новый текст и плашку «изм.».
+  Future<void> editMessage(int messageId, String newText) async {
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    await repo.editMessage(_chatId, messageId, newText);
+    await _reload();
+  }
+
+  /// Запросить расшифровку (opcode 202) у сервера и закешировать локально.
+  /// Возвращает текст или null. UI рисует indicator на время запроса.
+  Future<String?> transcribeAttach(MaxAttach a, int messageServerId) async {
+    final repo = await ref.read(messagesRepositoryProvider.future);
+    return repo.transcribeAttach(
+      a,
+      chatId: _chatId,
+      messageId: messageServerId,
+    );
+  }
 }
 
 final chatHistoryProvider = AsyncNotifierProvider.family<
