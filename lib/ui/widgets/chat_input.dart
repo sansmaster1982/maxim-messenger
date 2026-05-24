@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../data/max/models/upload_input.dart';
+import 'attach_picker.dart';
+
 class ChatInput extends StatefulWidget {
   const ChatInput({
     super.key,
@@ -10,7 +13,10 @@ class ChatInput extends StatefulWidget {
     this.onTypingChanged,
   });
   final Future<void> Function(String text) onSend;
-  final VoidCallback? onAttach;
+
+  /// Колбэк после выбора пользователем файлов через [AttachPicker].
+  /// Если null — кнопка вложений неактивна.
+  final void Function(List<UploadInput> inputs)? onAttach;
 
   /// Колбэк, через который виджет сигналит наверх о статусе «печатает».
   /// Дергается с дебаунсом: true при первом вводе, потом каждые 4 секунды,
@@ -94,9 +100,16 @@ class _ChatInputState extends State<ChatInput> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             IconButton(
-              onPressed: widget.onAttach,
+              onPressed: widget.onAttach == null
+                  ? null
+                  : () async {
+                      final inputs = await AttachPicker.show(context);
+                      if (inputs.isNotEmpty) {
+                        widget.onAttach?.call(inputs);
+                      }
+                    },
               icon: const Icon(Icons.attach_file),
-              tooltip: 'Прикрепить (TODO: опкоды загрузки не реверснуты)',
+              tooltip: 'Прикрепить',
             ),
             Expanded(
               child: TextField(

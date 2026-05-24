@@ -13,6 +13,8 @@ dependencies:
 
   # Сеть и протокол
   msgpack_dart: ^1.0.1
+  http: ^1.2.2
+  mime: ^2.0.0
 
   # Локальное хранение
   sqflite: ^2.4.1

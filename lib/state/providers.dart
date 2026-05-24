@@ -8,6 +8,7 @@ import '../data/repositories/auth_repository.dart';
 import '../data/repositories/chats_repository.dart';
 import '../data/repositories/contacts_repository.dart';
 import '../data/repositories/messages_repository.dart';
+import '../data/repositories/upload_repository.dart';
 
 final loggerProvider = Provider<Logger>((ref) {
   return Logger(printer: PrettyPrinter(methodCount: 0));
@@ -36,12 +37,25 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   );
 });
 
+final uploadRepositoryProvider = FutureProvider<UploadRepository>((ref) async {
+  final db = await ref.watch(appDatabaseProvider.future);
+  final repo = UploadRepository(
+    client: ref.watch(maxClientProvider),
+    db: db,
+    logger: ref.watch(loggerProvider),
+  );
+  ref.onDispose(repo.close);
+  return repo;
+});
+
 final messagesRepositoryProvider = FutureProvider<MessagesRepository>((ref) async {
   final db = await ref.watch(appDatabaseProvider.future);
+  final uploader = await ref.watch(uploadRepositoryProvider.future);
   final repo = MessagesRepository(
     client: ref.watch(maxClientProvider),
     db: db,
     storage: ref.watch(secureStorageProvider),
+    uploader: uploader,
     logger: ref.watch(loggerProvider),
   );
   await repo.start();
