@@ -7,6 +7,7 @@ import '../../core/errors.dart';
 import '../local/database.dart';
 import '../local/secure_storage.dart';
 import '../max/max_client.dart';
+import '../max/models/attach.dart';
 import '../max/models/incoming_message.dart';
 import '../max/models/message.dart';
 
@@ -98,7 +99,9 @@ class MessagesRepository {
       final text = m['text']?.toString() ?? '';
       final time = (m['time'] as num?)?.toInt() ??
           DateTime.now().millisecondsSinceEpoch;
-      if (text.isEmpty) continue;
+      final attRaw = (m['attaches'] ?? m['attachments']) as List?;
+      final hasAttaches = attRaw != null && attRaw.isNotEmpty;
+      if (text.isEmpty && !hasAttaches) continue;
       final dir = (myId != null && sender == myId)
           ? MessageDirection.outgoing
           : MessageDirection.incoming;
@@ -111,6 +114,13 @@ class MessagesRepository {
         direction: dir,
       );
       await db.insertMessage(msg);
+      if (hasAttaches && id != null) {
+        await _persistAttaches(
+          attRaw,
+          chatId: chatId,
+          messageServerId: id,
+        );
+      }
       out.add(msg);
     }
     if (out.isNotEmpty) {
@@ -119,12 +129,35 @@ class MessagesRepository {
         await db.updateChatPreview(
           chatId: chatId,
           timeMs: last.timeMs,
-          preview: last.text,
+          preview: last.text.isNotEmpty ? last.text : '[Вложение]',
         );
       }
       _onChat.add(chatId);
     }
     return out;
+  }
+
+  Future<void> _persistAttaches(
+    List<dynamic> raw, {
+    required int chatId,
+    String? messageLocalId,
+    int? messageServerId,
+  }) async {
+    for (final r in raw) {
+      if (r is! Map) continue;
+      final m = r.map((k, v) => MapEntry(k.toString(), v));
+      try {
+        final a = MaxAttach.fromServer(m);
+        await db.insertAttach(
+          a,
+          chatId: chatId,
+          messageLocalId: messageLocalId,
+          messageServerId: messageServerId,
+        );
+      } catch (e) {
+        _log.w('persist attach failed: $e');
+      }
+    }
   }
 
   Future<MaxMessage> sendText(
@@ -285,10 +318,18 @@ class MessagesRepository {
       direction: dir,
     );
     await db.insertMessage(msg);
+    if (m.attaches.isNotEmpty && m.messageId != null) {
+      await _persistAttaches(
+        m.attaches,
+        chatId: m.chatId,
+        messageServerId: m.messageId,
+      );
+    }
+    final preview = msg.text.isNotEmpty ? msg.text : '[Вложение]';
     await db.updateChatPreview(
       chatId: m.chatId,
       timeMs: msg.timeMs,
-      preview: msg.text,
+      preview: preview,
       incUnread: dir == MessageDirection.incoming ? 1 : 0,
     );
     _onChat.add(m.chatId);
