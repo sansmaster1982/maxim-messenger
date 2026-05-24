@@ -58,13 +58,21 @@ lib/
 | 46    | CONTACT_INFO_BY_PHONE       |
 | 48    | CHAT_INFO                   |
 | 49    | CHAT_HISTORY                |
-| 64    | SEND_MESSAGE                |
+| 51    | CHAT_MEDIA (галерея чата)   |
+| 64    | SEND_MESSAGE (+attaches)    |
 | 65    | TYPING                      |
+| 67    | MSG_EDIT                    |
+| 80    | PHOTO_UPLOAD                |
+| 81    | STICKER_UPLOAD              |
+| 82    | VIDEO_UPLOAD                |
+| 83    | VIDEO_PLAY                  |
+| 87    | FILE_UPLOAD                 |
+| 88    | FILE_DOWNLOAD               |
 | 115   | 2FA_PASSWORD                |
+| 202   | TRANSCRIBE_MEDIA            |
 
-Опкоды для медиа (UPLOAD_*, DOWNLOAD_*) не реверснуты. Кнопка «прикрепить»
-в UI присутствует, но показывает плашку с пометкой TODO. Чтобы их добавить,
-надо порыться в декомпиле APK из `../fishing max this-is-face/apk_check/`.
+Детальная таблица с источниками — `docs/MEDIA_OPCODES.md`. Журнал
+прогресса разработки — `docs/PROGRESS.md`.
 
 ## Установка и запуск
 
@@ -73,16 +81,38 @@ lib/
 flutter pub get
 ```
 
-Android:
+### Android (требуется Android SDK + Java 17)
+
 ```
-flutter run -d <device>
+flutter run -d <device-id>
+# или
+flutter build apk --debug
 ```
 
-iOS (требуется macOS):
+Если `flutter build apk` падает с `Unable to establish loopback connection`
+в текущем терминале — собирай через Android Studio: File → Open → выбрать
+папку `android/`, Build → Build APK(s). Это известная проблема среды
+(JDK NIO UDS), Android Studio её обходит собственным Gradle-daemon.
+
+### iOS (требуется macOS + Xcode)
+
 ```
 cd ios && pod install && cd ..
-flutter run -d <device>
+flutter run -d <device-id>
 ```
+
+### Windows desktop
+
+Требует **Developer Mode** включённого в Windows (для symlink-плагинов).
+
+1. `start ms-settings:developers` → включить «Режим разработчика».
+2. `flutter build windows --debug`
+3. Артефакт: `build/windows/x64/runner/Debug/maxim_messenger.exe`
+
+На desktop:
+- Импорт контактов и снимок с камеры недоступны (платформенные плагины).
+- Текст, история, файлы через file_picker — работают.
+- SQLite через `sqflite_common_ffi` (нативная DLL, не Android).
 
 ## Авторизация
 

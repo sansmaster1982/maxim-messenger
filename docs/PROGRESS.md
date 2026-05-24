@@ -144,7 +144,7 @@ Flutter создаёт symlinks для каталогов плагинов в `w
 - Git: 7 коммитов на `master` (см. ниже).
 
 ```
-__PHASE_3_COMMIT__ Phase 3: добавлена платформа Windows + sqflite_common_ffi
+0c6acdf Phase 3: подготовка к сборке (Windows desktop + sqflite_ffi)
 1e336fd Phase 2.3: MSG_EDIT + CHAT_MEDIA-галерея + TRANSCRIBE
 9441f1d Phase 2.2: upload pipeline + UI медиа
 032f040 Phase 2.1: фундамент медиа (опкоды, MaxAttach, БД v4)
