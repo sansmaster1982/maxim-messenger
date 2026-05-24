@@ -101,18 +101,45 @@ cd ios && pod install && cd ..
 flutter run -d <device-id>
 ```
 
-### Windows desktop
+### Windows desktop (Flutter UI)
 
 Требует **Developer Mode** включённого в Windows (для symlink-плагинов).
 
 1. `start ms-settings:developers` → включить «Режим разработчика».
-2. `flutter build windows --debug`
-3. Артефакт: `build/windows/x64/runner/Debug/maxim_messenger.exe`
+2. Перелогиниться (или открыть свежий терминал — privilege-token обновляется только в новом logon-сеансе).
+3. `flutter build windows --debug`
+4. Артефакт: `build/windows/x64/runner/Debug/maxim_messenger.exe`
 
 На desktop:
 - Импорт контактов и снимок с камеры недоступны (платформенные плагины).
 - Текст, история, файлы через file_picker — работают.
 - SQLite через `sqflite_common_ffi` (нативная DLL, не Android).
+
+### CLI (standalone EXE, без Flutter)
+
+`bin/maxim_cli.dart` — полнофункциональный консольный клиент, использует
+тот же `MaxClient`. Не требует Developer Mode и Android-toolchain.
+
+```
+dart compile exe bin/maxim_cli.dart -o build/maxim_cli.exe
+```
+
+Получается ~6 МБ AOT-скомпилированный exe. Smoke:
+
+```
+build/maxim_cli.exe --probe      # TLS-хендшейк + INIT, без логина
+build/maxim_cli.exe --version
+build/maxim_cli.exe               # интерактивный REPL
+```
+
+REPL-команды:
+- `send <chatId> <text...>` — отправить сообщение
+- `hist <chatId> [count]` — последние N сообщений
+- `find <phone>` — найти контакт по номеру
+- `me` — мой профиль
+- `quit` — выход
+
+Токен после первого логина кладётся в `max_token.txt` рядом с exe.
 
 ## Авторизация
 
