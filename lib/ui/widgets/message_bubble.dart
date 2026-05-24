@@ -4,8 +4,12 @@ import 'package:intl/intl.dart';
 import '../../data/max/models/message.dart';
 
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({super.key, required this.message, this.onRetry});
   final MaxMessage message;
+
+  /// Колбэк по тапу на статус-иконку failed-сообщения. Если null — иконка не
+  /// кликабельная.
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -15,6 +19,13 @@ class MessageBubble extends StatelessWidget {
     final fg = isOut ? scheme.onPrimaryContainer : scheme.onSurface;
     final time = DateTime.fromMillisecondsSinceEpoch(message.timeMs);
     final hasReply = message.replyToId != null;
+    final isFailed = message.status == MessageStatus.failed;
+    final statusColor = isFailed ? scheme.error : fg.withValues(alpha: 0.7);
+    final statusIcon = Icon(
+      _statusIcon(message.status),
+      size: 14,
+      color: statusColor,
+    );
     return Align(
       alignment: isOut ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -51,11 +62,30 @@ class MessageBubble extends StatelessWidget {
                 ),
                 if (isOut) ...[
                   const SizedBox(width: 4),
-                  Icon(
-                    _statusIcon(message.status),
-                    size: 14,
-                    color: fg.withValues(alpha: 0.7),
-                  ),
+                  if (isFailed && onRetry != null)
+                    InkWell(
+                      onTap: onRetry,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Padding(
+                        padding: const EdgeInsets.all(2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            statusIcon,
+                            const SizedBox(width: 2),
+                            Text(
+                              'повторить',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: statusColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    statusIcon,
                 ]
               ],
             )
