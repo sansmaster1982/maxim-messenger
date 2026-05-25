@@ -1,70 +1,65 @@
 @echo off
-chcp 65001 > nul
 setlocal
 
 echo ===============================================
-echo   Maxim — сборка debug APK для Android
+echo   Maxim - build debug APK for Android
 echo ===============================================
 echo.
 
-REM Этот скрипт открывает чистую cmd-сессию у тебя на ПК — JDK здесь
-REM получит нормальные права на NIO Pipe, и Gradle отработает как надо.
-REM Внутри bash-сессии Claude Code это падало с UDS-ошибкой; в твоей
-REM пользовательской cmd-сессии — пройдёт.
-
 cd /d "%~dp0"
 
-if defined ANDROID_HOME goto sdk_ok
-if exist "%LOCALAPPDATA%\Android\Sdk" (
-    set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
-    set "ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk"
+if not defined ANDROID_HOME (
+    if exist "%LOCALAPPDATA%\Android\Sdk" (
+        set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+        set "ANDROID_SDK_ROOT=%LOCALAPPDATA%\Android\Sdk"
+    )
 )
-:sdk_ok
 
-echo Использую Android SDK: %ANDROID_HOME%
+echo Android SDK: %ANDROID_HOME%
+echo Project dir: %CD%
 echo.
 
-where flutter > nul 2>&1
+where flutter >nul 2>&1
 if errorlevel 1 (
-    echo ОШИБКА: flutter не найден в PATH.
-    echo Добавь C:\flutter\bin (или путь к Flutter SDK^) в системный PATH.
+    echo ERROR: flutter not found in PATH.
+    echo Add C:\flutter\bin to your system PATH.
     pause
     exit /b 1
 )
 
-echo Шаг 1/3: flutter pub get
+echo Step 1/3: flutter pub get
 call flutter pub get
 if errorlevel 1 (
-    echo ОШИБКА pub get. Подробности выше.
+    echo ERROR at pub get. See output above.
     pause
     exit /b 1
 )
 
 echo.
-echo Шаг 2/3: flutter build apk --debug
-echo (первая сборка может занять 3-8 минут — скачивается Gradle и зависимости)
+echo Step 2/3: flutter build apk --debug
+echo (First build can take 3-8 minutes - downloading Gradle and deps)
 call flutter build apk --debug
 if errorlevel 1 (
     echo.
-    echo ОШИБКА сборки. Подробности выше.
+    echo ERROR at build. See output above.
     pause
     exit /b 1
 )
 
 echo.
-echo Шаг 3/3: артефакт
+echo Step 3/3: artifact check
 set "APK=%~dp0build\app\outputs\flutter-apk\app-debug.apk"
 if exist "%APK%" (
     echo.
-    echo ✓ APK собран:
+    echo SUCCESS: APK built
     echo   %APK%
     echo.
-    for %%I in ("%APK%") do echo   Размер: %%~zI байт
+    for %%I in ("%APK%") do echo   Size: %%~zI bytes
     echo.
-    echo Открываю папку...
+    echo Opening folder...
     explorer /select,"%APK%"
 ) else (
-    echo ВНИМАНИЕ: build вернул успех, но APK не найден по ожидаемому пути:
+    echo WARNING: build returned OK, but APK not found at:
     echo   %APK%
 )
 
