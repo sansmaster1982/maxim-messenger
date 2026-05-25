@@ -95,7 +95,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 TextField(
                   controller: _codeCtrl,
                   keyboardType: TextInputType.number,
+                  autofocus: true,
                   decoration: const InputDecoration(labelText: 'Код'),
+                  onSubmitted: _busy
+                      ? null
+                      : (_) => _run(
+                          () => ctrl.submitSmsCode(_codeCtrl.text.trim()),
+                        ),
                 ),
                 const SizedBox(height: 16),
                 FilledButton(
@@ -107,6 +113,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: _busy
                       ? const CircularProgressIndicator()
                       : const Text('Подтвердить'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () {
+                          _codeCtrl.clear();
+                          _run(() => ctrl.resendSms());
+                        },
+                  child: const Text('Получить SMS заново'),
                 ),
               ] else if (session.authFlow == AuthState.awaiting2fa) ...[
                 const Text(
