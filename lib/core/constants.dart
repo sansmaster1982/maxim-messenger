@@ -3,7 +3,7 @@ class MaxProto {
   static const String host = 'api.oneme.ru';
   static const int port = 443;
   static const int protoVersion = 10;
-  static const String appVersion = '26.11.0';
+  static const String appVersion = '26.15.0';
   static const String deviceType = 'ANDROID';
   static const String locale = 'ru';
 }

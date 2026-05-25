@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'calls_list_screen.dart';
 import 'chats_list_screen.dart';
 import 'contacts_screen.dart';
 import 'settings_screen.dart';
 
 /// Корневой экран приложения после успешного логина.
-/// Bottom navigation на четыре таба, повторяет оригинальный MAX.
+/// Bottom navigation: Чаты, Контакты, Настройки. Таб «Звонки» убран —
+/// real-time медиа MAX (WebRTC-обвязка) не реверснута.
 class MainShell extends ConsumerStatefulWidget {
   const MainShell({super.key});
 
@@ -20,7 +20,6 @@ class _MainShellState extends ConsumerState<MainShell> {
 
   static const _pages = <Widget>[
     ChatsListScreen(),
-    CallsListScreen(),
     ContactsScreen(),
     SettingsScreen(),
   ];
@@ -37,11 +36,6 @@ class _MainShellState extends ConsumerState<MainShell> {
             icon: Icon(Icons.chat_bubble_outline),
             selectedIcon: Icon(Icons.chat_bubble),
             label: 'Чаты',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.call_outlined),
-            selectedIcon: Icon(Icons.call),
-            label: 'Звонки',
           ),
           NavigationDestination(
             icon: Icon(Icons.contacts_outlined),

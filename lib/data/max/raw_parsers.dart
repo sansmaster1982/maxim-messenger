@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 /// Минимальные парсеры значений msgpack по сырому байту, чтобы
@@ -45,7 +46,7 @@ class RawParsers {
       return null;
     }
     if (p + n > data.length) return null;
-    return String.fromCharCodes(data.sublist(p, p + n)).trim();
+    return utf8.decode(data.sublist(p, p + n), allowMalformed: true).trim();
   }
 
   static String? findLongToken(Uint8List data) {
@@ -74,6 +75,7 @@ class RawParsers {
   }
 
   static String? findUuid(Uint8List data) {
+    // UUID состоит только из ASCII символов, поэтому fromCharCodes тут безопасен.
     final text = String.fromCharCodes(data);
     final re = RegExp(
       r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',

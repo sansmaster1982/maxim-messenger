@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:logger/logger.dart';
 
+import '../../core/errors.dart';
 import '../local/secure_storage.dart';
 import '../max/max_client.dart';
 
@@ -40,8 +43,37 @@ class AuthRepository {
   }
 
   Future<void> requestSms(String phone) async {
-    if (!client.isConnected) await client.connect();
-    _verifyToken = await client.startAuthSms(phone);
+    _verifyToken = await _withFreshConnection(() => client.startAuthSms(phone));
+  }
+
+  /// Гарантирует живое TLS-соединение и выполняет [op]. Если соединение упало
+  /// в течение нескольких миллисекунд после connect (race condition при
+  /// устаревшем APP_VERSION или сервер DROP'ит INIT) — делает один retry с
+  /// небольшой паузой.
+  Future<T> _withFreshConnection<T>(Future<T> Function() op) async {
+    Object? lastErr;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (!client.isConnected) {
+        try {
+          await client.connect();
+        } catch (e) {
+          lastErr = e;
+          if (attempt == 0) {
+            await Future<void>.delayed(const Duration(milliseconds: 500));
+            continue;
+          }
+          rethrow;
+        }
+      }
+      try {
+        return await op();
+      } on MaxNotConnected catch (e) {
+        lastErr = e;
+        // соединение упало между connect() и операцией — попробуем ещё раз
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    throw lastErr ?? const MaxNotConnected('connection failed');
   }
 
   /// Возвращает [AuthState.authenticated] если код принят и токен сохранён,
