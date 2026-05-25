@@ -78,9 +78,25 @@ class AuthRepository {
 
   /// Возвращает [AuthState.authenticated] если код принят и токен сохранён,
   /// или [AuthState.awaiting2fa] если включён пароль.
+  ///
+  /// Verify-токен одноразовый — если запрос отправлен и сервер его
+  /// потребил, повтор приведёт к `cmd=3 INVALID_TOKEN`. Поэтому если
+  /// соединение мёртво, поднимаем его ОДИН РАЗ (без сетевого запроса),
+  /// потом дёргаем confirmSms ровно один раз. Любая ошибка возвращается
+  /// наружу — UI попросит запросить новый SMS.
   Future<AuthState> submitSmsCode(String code) async {
     final vt = _verifyToken;
     if (vt == null) throw StateError('SMS не запрошен');
+    if (!client.isConnected) {
+      try {
+        await client.connect();
+      } catch (e) {
+        // Если коннект упал ДО отправки confirmSms — verify-token не использован,
+        // можно попробовать ещё раз через 500мс.
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        await client.connect();
+      }
+    }
     final r = await client.confirmSms(vt, code);
     if (r.authToken != null) {
       await _completeLogin(r.authToken!);
@@ -90,10 +106,18 @@ class AuthRepository {
     return AuthState.awaiting2fa;
   }
 
+  /// После ошибки `cmd=3` (verify-token истёк/использован) UI должен
+  /// сбросить ввод и попросить пользователя нажать «Получить SMS заново».
+  void resetSmsState() {
+    _verifyToken = null;
+  }
+
   Future<void> submit2fa(String password) async {
     final t = _trackId;
     if (t == null) throw StateError('2FA-челлендж отсутствует');
-    final token = await client.confirm2fa(t, password);
+    final token = await _withFreshConnection(
+      () => client.confirm2fa(t, password),
+    );
     await _completeLogin(token);
   }
 

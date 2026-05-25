@@ -58,7 +58,7 @@ class SessionController extends Notifier<SessionState> {
         authFlow: AuthState.awaitingSms,
       );
     } catch (e) {
-      state = state.copyWith(error: e.toString());
+      state = state.copyWith(error: _humanError(e));
     }
   }
 
@@ -73,8 +73,26 @@ class SessionController extends Notifier<SessionState> {
         state = state.copyWith(authFlow: AuthState.awaiting2fa);
       }
     } catch (e) {
-      state = state.copyWith(error: e.toString());
+      // Если verify-token использован/истёк — сбросим состояние SMS,
+      // UI покажет ошибку и предложит запросить новый код.
+      repo.resetSmsState();
+      state = state.copyWith(error: _humanError(e));
     }
+  }
+
+  /// Повторно отправить SMS-код на тот же номер. Используется после
+  /// ошибки подтверждения (истёкший verify-token).
+  Future<void> resendSms() async {
+    final phone = state.phone;
+    if (phone == null || phone.isEmpty) return;
+    await requestSms(phone);
+  }
+
+  String _humanError(Object e) {
+    final s = e.toString();
+    // обрезаем тип исключения для красоты
+    final idx = s.indexOf(': ');
+    return idx >= 0 ? s.substring(idx + 2) : s;
   }
 
   Future<void> submit2fa(String password) async {
@@ -84,7 +102,7 @@ class SessionController extends Notifier<SessionState> {
       await repo.submit2fa(password);
       state = const SessionState(status: SessionStatus.signedIn);
     } catch (e) {
-      state = state.copyWith(error: e.toString());
+      state = state.copyWith(error: _humanError(e));
     }
   }
 

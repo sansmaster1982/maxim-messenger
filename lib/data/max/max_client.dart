@@ -156,7 +156,16 @@ class MaxClient {
       'verifyCode': code,
       'authTokenType': 'CHECK_CODE',
     });
-    if (f.cmd != 1) throw MaxLoginFailed('AUTH_CONFIRM cmd=${f.cmd}');
+    if (f.cmd != 1) {
+      // cmd=3 — типичный ответ сервера при истёкшем/использованном verify-token
+      // или неверном коде SMS. UI должен сбросить состояние и запросить новый.
+      if (f.cmd == 3) {
+        throw const MaxLoginFailed(
+          'SMS-код неверный или истёк. Запросите новый код.',
+        );
+      }
+      throw MaxLoginFailed('AUTH_CONFIRM cmd=${f.cmd}');
+    }
 
     final authToken = RawParsers.findLongToken(f.body);
     if (authToken != null) return (authToken: authToken, trackId: null);
