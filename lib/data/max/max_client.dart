@@ -76,6 +76,14 @@ class MaxClient {
       await _initSession();
       _emitState(MaxConnectionState.connected);
     } catch (e) {
+      // INIT упал или сокет порвался — приведём состояние к чистому
+      // disconnected, чтобы следующий connect() имел шанс начать заново.
+      await _sub?.cancel();
+      _sub = null;
+      try {
+        await _socket?.close();
+      } catch (_) {}
+      _socket = null;
       _emitState(MaxConnectionState.disconnected);
       rethrow;
     }

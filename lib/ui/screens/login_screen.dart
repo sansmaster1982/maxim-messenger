@@ -16,6 +16,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _codeCtrl = TextEditingController();
   final _pwCtrl = TextEditingController();
   bool _busy = false;
+  bool _pwVisible = false;
 
   @override
   void dispose() {
@@ -108,12 +109,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       : const Text('Подтвердить'),
                 ),
               ] else if (session.authFlow == AuthState.awaiting2fa) ...[
-                const Text('Нужен пароль 2FA от MAX'),
+                const Text(
+                  'Введите пароль 2FA от вашего аккаунта MAX. '
+                  'Можно использовать любые символы (буквы, цифры).',
+                ),
                 const SizedBox(height: 16),
                 TextField(
                   controller: _pwCtrl,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Пароль 2FA'),
+                  obscureText: !_pwVisible,
+                  keyboardType: TextInputType.visiblePassword,
+                  enableSuggestions: false,
+                  autocorrect: false,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Пароль 2FA',
+                    suffixIcon: IconButton(
+                      tooltip: _pwVisible ? 'Скрыть' : 'Показать',
+                      icon: Icon(
+                        _pwVisible
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                      ),
+                      onPressed: () => setState(() => _pwVisible = !_pwVisible),
+                    ),
+                  ),
+                  onSubmitted: _busy
+                      ? null
+                      : (_) => _run(() => ctrl.submit2fa(_pwCtrl.text)),
                 ),
                 const SizedBox(height: 16),
                 FilledButton(
