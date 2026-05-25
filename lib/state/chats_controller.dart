@@ -34,6 +34,24 @@ class ChatsListController extends AsyncNotifier<List<MaxChat>> {
     await repo.markRead(chatId);
     await _reload();
   }
+
+  Future<void> togglePin(int chatId, bool pinned) async {
+    final db = await ref.read(appDatabaseProvider.future);
+    await db.setChatFlag(chatId, pinned: pinned);
+    await _reload();
+  }
+
+  Future<void> toggleArchive(int chatId, bool archived) async {
+    final db = await ref.read(appDatabaseProvider.future);
+    await db.setChatFlag(chatId, archived: archived);
+    await _reload();
+  }
+
+  Future<void> toggleMute(int chatId, bool muted) async {
+    final db = await ref.read(appDatabaseProvider.future);
+    await db.setChatFlag(chatId, muted: muted);
+    await _reload();
+  }
 }
 
 final chatsListProvider =

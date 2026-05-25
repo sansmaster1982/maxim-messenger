@@ -21,7 +21,7 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -62,6 +62,17 @@ class AppDatabase {
       );
       await db.execute(
         'ALTER TABLE attachments ADD COLUMN transcription TEXT',
+      );
+    }
+    if (oldVersion < 6) {
+      await db.execute(
+        'ALTER TABLE chats ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        'ALTER TABLE chats ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        'ALTER TABLE chats ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0',
       );
     }
   }
@@ -111,7 +122,10 @@ class AppDatabase {
         is_group INTEGER NOT NULL DEFAULT 0,
         last_message_time_ms INTEGER,
         last_message_preview TEXT,
-        unread_count INTEGER NOT NULL DEFAULT 0
+        unread_count INTEGER NOT NULL DEFAULT 0,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        is_archived INTEGER NOT NULL DEFAULT 0,
+        is_muted INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -176,12 +190,31 @@ class AppDatabase {
 
   // ───────────────────────── chats ─────────────────────────
 
-  Future<List<MaxChat>> chats() async {
+  Future<List<MaxChat>> chats({bool includeArchived = false}) async {
     final rows = await _db.query(
       'chats',
+      where: includeArchived ? null : 'is_archived = 0',
+      orderBy: 'is_pinned DESC, last_message_time_ms DESC NULLS LAST',
+    );
+    return rows.map(MaxChat.fromDbRow).toList();
+  }
+
+  Future<List<MaxChat>> archivedChats() async {
+    final rows = await _db.query(
+      'chats',
+      where: 'is_archived = 1',
       orderBy: 'last_message_time_ms DESC NULLS LAST',
     );
     return rows.map(MaxChat.fromDbRow).toList();
+  }
+
+  Future<void> setChatFlag(int id, {bool? pinned, bool? archived, bool? muted}) async {
+    final values = <String, Object?>{};
+    if (pinned != null) values['is_pinned'] = pinned ? 1 : 0;
+    if (archived != null) values['is_archived'] = archived ? 1 : 0;
+    if (muted != null) values['is_muted'] = muted ? 1 : 0;
+    if (values.isEmpty) return;
+    await _db.update('chats', values, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<MaxChat?> chat(int id) async {

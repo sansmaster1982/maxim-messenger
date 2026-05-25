@@ -7,7 +7,9 @@ import '../../state/chats_controller.dart';
 import '../widgets/chat_input.dart';
 import '../widgets/date_divider.dart';
 import '../widgets/message_bubble.dart';
+import 'forward_picker_screen.dart';
 import 'media_gallery_screen.dart';
+import 'profile_screen.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.chatId, this.title});
@@ -95,6 +97,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               title: const Text('Копировать'),
               onTap: () => Navigator.pop(ctx, 'copy'),
             ),
+            ListTile(
+              leading: const Icon(Icons.forward),
+              title: const Text('Переслать'),
+              onTap: () => Navigator.pop(ctx, 'forward'),
+            ),
             if (canEdit)
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
@@ -118,6 +125,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       setState(() => _replyTo = m);
     } else if (action == 'copy') {
       await _copyToClipboard(m.text);
+    } else if (action == 'forward') {
+      if (m.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Пока пересылаются только текстовые сообщения'),
+          ),
+        );
+        return;
+      }
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ForwardPickerScreen(text: m.text),
+        ),
+      );
     } else if (action == 'edit') {
       await _showEditDialog(m);
     }
@@ -182,24 +203,104 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final loadingOlder = ctrl.isLoadingOlder;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title ?? 'Чат ${widget.chatId}'),
+        titleSpacing: 0,
+        title: InkWell(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ProfileScreen(
+                chatId: widget.chatId,
+                title: widget.title,
+              ),
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 18,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  child: Text(
+                    (widget.title?.isNotEmpty == true)
+                        ? widget.title![0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.title ?? 'Чат ${widget.chatId}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'был(а) недавно',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         actions: [
           IconButton(
-            tooltip: 'Медиа чата',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      MediaGalleryScreen(chatId: widget.chatId),
-                ),
-              );
-            },
-            icon: const Icon(Icons.collections_outlined),
+            tooltip: 'Видеозвонок',
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Видеозвонок: в разработке')),
+            ),
+            icon: const Icon(Icons.videocam_outlined),
           ),
           IconButton(
-            tooltip: 'Подтянуть с сервера',
-            onPressed: () => ctrl.syncFromServer(),
-            icon: const Icon(Icons.refresh),
+            tooltip: 'Звонок',
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Звонок: в разработке')),
+            ),
+            icon: const Icon(Icons.call_outlined),
+          ),
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'media') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        MediaGalleryScreen(chatId: widget.chatId),
+                  ),
+                );
+              } else if (v == 'sync') {
+                ctrl.syncFromServer();
+              } else if (v == 'profile') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ProfileScreen(
+                      chatId: widget.chatId,
+                      title: widget.title,
+                    ),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'profile', child: Text('Профиль')),
+              PopupMenuItem(value: 'media', child: Text('Медиа чата')),
+              PopupMenuItem(value: 'sync', child: Text('Обновить')),
+            ],
           ),
         ],
       ),

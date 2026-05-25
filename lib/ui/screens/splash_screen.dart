@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/session_controller.dart';
-import 'chats_list_screen.dart';
 import 'login_screen.dart';
+import 'main_shell.dart';
 
 class SplashScreen extends ConsumerWidget {
   const SplashScreen({super.key});
@@ -19,7 +19,7 @@ class SplashScreen extends ConsumerWidget {
       case SessionStatus.signedOut:
         return const LoginScreen();
       case SessionStatus.signedIn:
-        return const ChatsListScreen();
+        return const MainShell();
     }
   }
 }

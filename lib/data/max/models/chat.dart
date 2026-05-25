@@ -8,6 +8,9 @@ class MaxChat extends Equatable {
   final int? lastMessageTimeMs;
   final String? lastMessagePreview;
   final int unreadCount;
+  final bool isPinned;
+  final bool isArchived;
+  final bool isMuted;
 
   const MaxChat({
     required this.id,
@@ -17,6 +20,9 @@ class MaxChat extends Equatable {
     this.lastMessageTimeMs,
     this.lastMessagePreview,
     this.unreadCount = 0,
+    this.isPinned = false,
+    this.isArchived = false,
+    this.isMuted = false,
   });
 
   MaxChat copyWith({
@@ -26,6 +32,9 @@ class MaxChat extends Equatable {
     int? lastMessageTimeMs,
     String? lastMessagePreview,
     int? unreadCount,
+    bool? isPinned,
+    bool? isArchived,
+    bool? isMuted,
   }) {
     return MaxChat(
       id: id,
@@ -35,6 +44,9 @@ class MaxChat extends Equatable {
       lastMessageTimeMs: lastMessageTimeMs ?? this.lastMessageTimeMs,
       lastMessagePreview: lastMessagePreview ?? this.lastMessagePreview,
       unreadCount: unreadCount ?? this.unreadCount,
+      isPinned: isPinned ?? this.isPinned,
+      isArchived: isArchived ?? this.isArchived,
+      isMuted: isMuted ?? this.isMuted,
     );
   }
 
@@ -46,6 +58,9 @@ class MaxChat extends Equatable {
     'last_message_time_ms': lastMessageTimeMs,
     'last_message_preview': lastMessagePreview,
     'unread_count': unreadCount,
+    'is_pinned': isPinned ? 1 : 0,
+    'is_archived': isArchived ? 1 : 0,
+    'is_muted': isMuted ? 1 : 0,
   };
 
   factory MaxChat.fromDbRow(Map<String, Object?> r) => MaxChat(
@@ -56,6 +71,9 @@ class MaxChat extends Equatable {
     lastMessageTimeMs: r['last_message_time_ms'] as int?,
     lastMessagePreview: r['last_message_preview'] as String?,
     unreadCount: r['unread_count'] as int? ?? 0,
+    isPinned: (r['is_pinned'] as int? ?? 0) == 1,
+    isArchived: (r['is_archived'] as int? ?? 0) == 1,
+    isMuted: (r['is_muted'] as int? ?? 0) == 1,
   );
 
   @override
@@ -67,5 +85,8 @@ class MaxChat extends Equatable {
     lastMessageTimeMs,
     lastMessagePreview,
     unreadCount,
+    isPinned,
+    isArchived,
+    isMuted,
   ];
 }
