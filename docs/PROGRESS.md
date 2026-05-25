@@ -165,7 +165,49 @@ probe OK — handshake выполнен, выхожу.
 - `flutter pub get` чистый.
 - Целевые платформы в `pubspec`/`flutter create`: Android + iOS + Windows.
 - Дополнительно: standalone CLI (`bin/maxim_cli.dart` → `build/maxim_cli.exe`).
-- Git: 9 коммитов на `master`.
+- Git: 10+ коммитов на `master`.
+
+---
+
+## Этап 4 — редизайн под оригинальный MAX (2026-05-25)
+
+### Что сделано
+
+- **Тема** (`lib/ui/theme/app_theme.dart`): фирменная палитра MAX (#0066FF primary), `NavigationBar` со скруглёнными индикаторами, filled-inputs со скруглением 14px, кастомизированный FAB и AppBar.
+- **MainShell** (`lib/ui/screens/main_shell.dart`): `NavigationBar` с 4 табами — Чаты / Звонки / Контакты / Настройки. `IndexedStack` сохраняет state.
+- **Splash** теперь ведёт на MainShell вместо ChatsListScreen.
+- **ChatsListScreen**: SearchBar поверх списка, FAB «новый чат», цветные аватары по id, чистая типографика; long-press → bottom sheet с pin / mute / archive / mark-read.
+- **ChatScreen**: AppBar.title = аватар + имя + статус «был(а) недавно», тап открывает Profile. Actions: видеозвонок, звонок (заглушки), PopupMenu (Профиль / Медиа / Обновить). Long-press на сообщении расширен «Переслать».
+- **ProfileScreen** (`profile_screen.dart`): большой аватар, имя, телефон, action grid (Чат/Звонок/Видео/Поиск), Медиа чата, Уведомления switch, Закрепить, Архивировать, Очистить историю.
+- **ForwardPickerScreen**: поиск чата + отправка текста.
+- **CallsListScreen** (заглушка): локальная таблица `calls`, snackbar «в разработке».
+- **MaxChat**: `isPinned`, `isArchived`, `isMuted`. БД схема v6 с ALTER chats.
+- **AppDatabase.setChatFlag** + `chatsListController.togglePin/Archive/Mute`.
+- AndroidManifest и iOS Info.plist — `MAX` (вместо `Maxim`).
+
+### Финальная попытка APK
+
+Повторно прогнан `flutter build apk --debug` со всеми обходами (JBR 21,
+короткий TMP, ASCII-копия). Ошибка по-прежнему `Unable to establish
+loopback connection`. Заключение: блокер исключительно на стороне
+environment этого терминала, не кода.
+
+Сборка из стороннего терминала / Android Studio даст APK без правок.
+
+### Git
+
+```
+3a5891a Phase 4: редизайн под MAX (BottomNav, тема, профиль, pin/archive/forward)
+4727631 feat: CLI standalone (bin/maxim_cli.dart) — рабочий бинарь
+a90ace9 docs: расширить README + закрепить хеш Phase 3
+0c6acdf Phase 3: подготовка к сборке (Windows desktop + sqflite_ffi)
+1e336fd Phase 2.3: MSG_EDIT + CHAT_MEDIA-галерея + TRANSCRIBE
+9441f1d Phase 2.2: upload pipeline + UI медиа
+032f040 Phase 2.1: фундамент медиа (опкоды, MaxAttach, БД v4)
+dda9e51 Phase 1.2-1.3: reliability + research медиа-опкодов
+ff83855 Phase 1.1: пагинация, чат UX, импорт контактов
+a81e1af init: Flutter-форк MAX-мессенджера
+```
 
 ```
 0c6acdf Phase 3: подготовка к сборке (Windows desktop + sqflite_ffi)
