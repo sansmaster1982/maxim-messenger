@@ -60,8 +60,11 @@ class MaxClient {
   /// веб-токену из web.max.ru). Веб-токены сервер принимает только при WEB.
   String _deviceType = MaxProto.deviceType;
 
-  Future<void> connect({String deviceType = MaxProto.deviceType}) async {
-    _deviceType = deviceType;
+  /// [deviceType] null => сохранить текущий (важно для reconnect: иначе
+  /// переподключение сбрасывало бы WEB-сессию на ANDROID и сервер отвергал
+  /// бы веб-токен с login.cred).
+  Future<void> connect({String? deviceType}) async {
+    if (deviceType != null) _deviceType = deviceType;
     _emitState(MaxConnectionState.connecting);
     try {
       final s = await SecureSocket.connect(
