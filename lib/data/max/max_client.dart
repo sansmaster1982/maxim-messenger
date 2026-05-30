@@ -56,7 +56,12 @@ class MaxClient {
     if (!_stateCtrl.isClosed) _stateCtrl.add(s);
   }
 
-  Future<void> connect() async {
+  /// Тип устройства для INIT: 'ANDROID' (SMS-флоу) или 'WEB' (вход по
+  /// веб-токену из web.max.ru). Веб-токены сервер принимает только при WEB.
+  String _deviceType = MaxProto.deviceType;
+
+  Future<void> connect({String deviceType = MaxProto.deviceType}) async {
+    _deviceType = deviceType;
     _emitState(MaxConnectionState.connecting);
     try {
       final s = await SecureSocket.connect(
@@ -122,7 +127,7 @@ class MaxClient {
   Future<void> _initSession() async {
     final f = await _request(MaxOp.init, {
       'userAgent': {
-        'deviceType': MaxProto.deviceType,
+        'deviceType': _deviceType,
         'locale': MaxProto.locale,
         'appVersion': MaxProto.appVersion,
       },
@@ -157,8 +162,21 @@ class MaxClient {
       'authTokenType': 'CHECK_CODE',
     });
     if (f.cmd != 1) {
-      // cmd=3 — типичный ответ сервера при истёкшем/использованном verify-token
-      // или неверном коде SMS. UI должен сбросить состояние и запросить новый.
+      // Сервер возвращает structured error в decoded payload:
+      //  { error, message, localizedMessage, title }
+      // Покажем пользователю localizedMessage если он есть.
+      final d = f.decoded;
+      if (d is Map) {
+        final m = d.map((k, v) => MapEntry(k.toString(), v));
+        final loc = m['localizedMessage']?.toString();
+        final err = m['error']?.toString();
+        if (loc != null && loc.isNotEmpty) {
+          throw MaxLoginFailed(loc);
+        }
+        if (err != null && err.isNotEmpty) {
+          throw MaxLoginFailed('Сервер MAX: $err');
+        }
+      }
       if (f.cmd == 3) {
         throw const MaxLoginFailed(
           'SMS-код неверный или истёк. Запросите новый код.',
@@ -436,16 +454,39 @@ class MaxClient {
     _pending[seq] = completer;
 
     final frame = MaxCodec.frame(seq: seq, opcode: opcode, payload: payload);
+    // Маскируем чувствительные поля в логе.
+    _log.i(
+      'REQ op=$opcode seq=$seq payload=${_redact(payload)}',
+    );
     s.add(frame);
     await s.flush();
-
-    return completer.future.timeout(
+    final f = await completer.future.timeout(
       timeout,
       onTimeout: () {
         _pending.remove(seq);
         throw const MaxTimeout('request timeout');
       },
     );
+    _log.i(
+      'RESP op=$opcode seq=$seq cmd=${f.cmd} len=${f.body.length} '
+      'decoded=${_redact(f.decoded)}',
+    );
+    return f;
+  }
+
+  static String _redact(Object? v) {
+    if (v is Map) {
+      return v.map((k, v2) {
+        final ks = k.toString();
+        if (ks == 'token' || ks == 'password' || ks == 'trackId') {
+          return MapEntry(ks, '<redacted>');
+        }
+        return MapEntry(ks, _redact(v2));
+      }).toString();
+    }
+    if (v is List) return '[${v.map(_redact).join(', ')}]';
+    final s = v?.toString() ?? 'null';
+    return s.length > 200 ? '${s.substring(0, 200)}...(${s.length})' : s;
   }
 
   void _onData(Uint8List chunk) {
