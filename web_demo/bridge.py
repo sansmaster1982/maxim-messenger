@@ -161,16 +161,48 @@ class MaxConn:
             print("reader loop error:", e)
 
     @staticmethod
+    def _decode_bytes(o):
+        """Рекурсивно превращает bytes->str (utf-8), оставляя бинарь как есть.
+        Нужно потому что распаковка идёт с raw=True (иначе msgpack падает на
+        бинарных полях вроде аватаров с байтом 0xff)."""
+        if isinstance(o, bytes):
+            try:
+                return o.decode("utf-8")
+            except Exception:
+                return o.decode("utf-8", "replace")
+        if isinstance(o, dict):
+            return {MaxConn._decode_bytes(k): MaxConn._decode_bytes(v)
+                    for k, v in o.items()}
+        if isinstance(o, list):
+            return [MaxConn._decode_bytes(x) for x in o]
+        return o
+
+    @staticmethod
     def _unpack(data: bytes):
+        """Распаковка кадра MAX. Сервер иногда добавляет 1-4 байта префикса
+        перед msgpack, а большой LOGIN-ответ содержит бинарные поля — поэтому
+        перебираем offset, читаем потоково (Unpacker, не unpackb — большой
+        payload бывает со «склеенными» объектами) с raw=True и берём самый
+        содержательный dict."""
         if not data:
             return None
-        for off in (0, 1, 2, 3, 4):
+        best = None
+        for off in range(0, 6):
             try:
-                return msgpack.unpackb(data[off:], raw=False,
-                                       strict_map_key=False)
+                u = msgpack.Unpacker(raw=True, strict_map_key=False,
+                                     max_buffer_size=0)
+                u.feed(data[off:])
+                obj = u.unpack()
             except Exception:
-                pass
-        return None
+                continue
+            obj = MaxConn._decode_bytes(obj)
+            if isinstance(obj, dict):
+                # самый «богатый» map (с profile/chats) — самый длинный
+                if best is None or len(obj) > len(best):
+                    best = obj
+                if "chats" in obj or "profile" in obj or "message" in obj:
+                    return obj
+        return best
 
     async def _request(self, opcode: int, payload: dict, timeout=30.0):
         if self._writer is None:
@@ -281,15 +313,17 @@ class MaxConn:
 
     # ── auth: вход по токену ──
     async def login(self, token: str) -> dict:
+        # interactive=True заставляет сервер вернуть полный снэпшот:
+        # профиль + контакты + чаты (~200+ KB). При False чаты не приходят.
         cmd, _, decoded, raw = await self._request(19, {
             "token": token,
-            "interactive": False,
+            "interactive": True,
             "chatsCount": 40,
             "chatsSync": 0,
             "contactsSync": 0,
             "presenceSync": 0,
             "draftsSync": 0,
-        })
+        }, timeout=45.0)
         if cmd != 1:
             msg = self._err_message(decoded)
             raise RuntimeError(msg or f"LOGIN cmd={cmd}")
@@ -349,13 +383,18 @@ class MaxConn:
 
 
 def extract_chats(login_resp: dict) -> list:
-    """Вытащить список чатов из ответа LOGIN. Структура может отличаться,
-    поэтому ищем по нескольким ключам."""
+    """Вытащить список чатов из ответа LOGIN. Формат отличается между
+    ANDROID и WEB: chats бывает list или map {chatId: chatObj}."""
+    if not isinstance(login_resp, dict):
+        return []
     arr = None
-    for key in ("chats", "chatList", "items"):
+    for key in ("chats", "chatList", "items", "dialogs"):
         v = login_resp.get(key)
         if isinstance(v, list):
             arr = v
+            break
+        if isinstance(v, dict):
+            arr = list(v.values())
             break
     if arr is None:
         return []
@@ -363,20 +402,44 @@ def extract_chats(login_resp: dict) -> list:
     for c in arr:
         if not isinstance(c, dict):
             continue
-        cid = c.get("id") or c.get("chatId")
+        cid = c.get("id") or c.get("chatId") or c.get("cid")
         if cid is None:
             continue
-        last = c.get("lastMessage") or c.get("message") or {}
+        last = c.get("lastMessage") or c.get("message") or c.get("lastMsg") or {}
+        title = (c.get("title") or c.get("name")
+                 or _peer_name(c) or f"Чат {cid}")
         out.append({
             "id": cid,
-            "title": c.get("title") or c.get("name") or f"Чат {cid}",
+            "title": title,
             "type": c.get("type", ""),
             "lastText": last.get("text", "") if isinstance(last, dict) else "",
             "lastTime": (last.get("time") if isinstance(last, dict) else None)
-                        or c.get("lastEventTime"),
-            "unread": c.get("newMessages") or c.get("unread") or 0,
+                        or c.get("lastEventTime") or c.get("modified"),
+            "unread": c.get("newMessages") or c.get("unread")
+                      or c.get("unreadCount") or 0,
         })
+    # свежие сверху
+    out.sort(key=lambda x: x.get("lastTime") or 0, reverse=True)
     return out
+
+
+def _peer_name(chat: dict):
+    """Имя собеседника для диалога 1:1, если нет title."""
+    for key in ("participants", "members", "users"):
+        v = chat.get(key)
+        if isinstance(v, list):
+            for p in v:
+                if isinstance(p, dict):
+                    nm = p.get("name") or p.get("firstName")
+                    if nm:
+                        return nm
+        if isinstance(v, dict):
+            for p in v.values():
+                if isinstance(p, dict):
+                    nm = p.get("name") or p.get("firstName")
+                    if nm:
+                        return nm
+    return None
 
 
 # ════════════════════════════ WebSocket (stdlib) ════════════════════════════
