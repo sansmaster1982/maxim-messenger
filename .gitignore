@@ -64,3 +64,6 @@ desktop.ini
 
 # Claude Code локальный конфиг
 .claude/
+
+# Лог моста
+web_demo/bridge.log
