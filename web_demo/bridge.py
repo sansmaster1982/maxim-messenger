@@ -50,6 +50,38 @@ WS_HOST = "127.0.0.1"
 WS_PORT = 8765
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+# ── логирование диалога с сервером (консоль + bridge.log) ──
+import os as _os
+_LOG_PATH = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "bridge.log")
+try:
+    _LOG_FILE = open(_LOG_PATH, "w", encoding="utf-8")
+except Exception:
+    _LOG_FILE = None
+
+_SECRET_KEYS = {"token", "password", "trackId", "authToken"}
+
+def _redact(v):
+    """Прячет токены/пароли, обрезает длинные значения для лога."""
+    if isinstance(v, dict):
+        return {k: ("<скрыто>" if str(k) in _SECRET_KEYS else _redact(val))
+                for k, val in v.items()}
+    if isinstance(v, list):
+        return [_redact(x) for x in v[:10]]
+    s = str(v)
+    return s if len(s) <= 300 else s[:300] + f"...(+{len(s)-300})"
+
+_orig_print = print
+
+def print(*args, **kwargs):  # noqa: A001 — намеренно переопределяем
+    kwargs.setdefault("flush", True)
+    _orig_print(*args, **kwargs)
+    if _LOG_FILE:
+        try:
+            _LOG_FILE.write(" ".join(str(a) for a in args) + "\n")
+            _LOG_FILE.flush()
+        except Exception:
+            pass
+
 
 # ════════════════════════════ MAX protocol ════════════════════════════
 
@@ -158,9 +190,14 @@ class MaxConn:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self._pending[seq] = fut
+        print(f"[REQ] op={opcode} seq={seq} {_redact(payload)}", flush=True)
         self._writer.write(bytes(header) + body)
         await self._writer.drain()
-        return await asyncio.wait_for(fut, timeout=timeout)
+        cmd, op, decoded, raw = await asyncio.wait_for(fut, timeout=timeout)
+        shown = _redact(decoded) if isinstance(decoded, (dict, list)) else \
+            (f"<{len(raw)} bytes>" if raw else decoded)
+        print(f"[RESP] op={opcode} seq={seq} cmd={cmd} {shown}", flush=True)
+        return cmd, op, decoded, raw
 
     # ── auth: вход по SMS ──
     async def start_auth_sms(self, phone: str) -> str:
