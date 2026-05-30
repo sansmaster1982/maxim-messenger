@@ -142,10 +142,12 @@ class MaxConn:
                     (header[6] << 24) | (header[7] << 16)
                     | (header[8] << 8) | header[9]
                 )
+                cof = (length_raw >> 24) & 0xFF
                 payload_len = length_raw & 0x00FFFFFF
                 body = b""
                 if payload_len:
                     body = await self._reader.readexactly(payload_len)
+                body = self._decompress(cof, payload_len, body)
                 decoded = self._unpack(body)
                 fut = self._pending.pop(resp_seq, None)
                 if fut and not fut.done():
@@ -178,29 +180,43 @@ class MaxConn:
         return o
 
     @staticmethod
+    def _decompress(cof: int, ln: int, body: bytes) -> bytes:
+        """Тело кадра MAX сжато. Старший байт поля длины (cof) — флаг:
+        0 = без сжатия, 0xFF = zstd, >0 = LZ4 block (размер распаковки = ln*cof).
+        Источник: реверс defpackage/e1d.java + lp.java в декомпиле APK."""
+        if cof == 0 or not body:
+            return body
+        try:
+            if cof == 0xFF:
+                import zstandard
+                return zstandard.ZstdDecompressor().decompress(body)
+            import lz4.block
+            return lz4.block.decompress(body, uncompressed_size=ln * cof)
+        except Exception as e:
+            print(f"[decompress] cof={cof} ln={ln} failed: {e}")
+            return body
+
+    @staticmethod
     def _unpack(data: bytes):
-        """Распаковка кадра MAX. Сервер иногда добавляет 1-4 байта префикса
-        перед msgpack, а большой LOGIN-ответ содержит бинарные поля — поэтому
-        перебираем offset, читаем потоково (Unpacker, не unpackb — большой
-        payload бывает со «склеенными» объектами) с raw=True и берём самый
-        содержательный dict."""
+        """Парсинг уже РАСПАКОВАННОГО msgpack-тела. raw=False (строки в utf-8),
+        потоковый Unpacker (большой ответ бывает со «склеенными» объектами).
+        Перебор offset — на случай редкого ведущего префикса."""
         if not data:
             return None
         best = None
-        for off in range(0, 6):
+        for off in range(0, 4):
             try:
-                u = msgpack.Unpacker(raw=True, strict_map_key=False,
+                u = msgpack.Unpacker(raw=False, strict_map_key=False,
                                      max_buffer_size=0)
                 u.feed(data[off:])
                 obj = u.unpack()
             except Exception:
                 continue
-            obj = MaxConn._decode_bytes(obj)
             if isinstance(obj, dict):
-                # самый «богатый» map (с profile/chats) — самый длинный
                 if best is None or len(obj) > len(best):
                     best = obj
-                if "chats" in obj or "profile" in obj or "message" in obj:
+                if any(k in obj for k in ("chats", "profile", "message",
+                                          "messages", "contact", "contacts")):
                     return obj
         return best
 
