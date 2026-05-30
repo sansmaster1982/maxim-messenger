@@ -162,7 +162,84 @@ class MaxConn:
         await self._writer.drain()
         return await asyncio.wait_for(fut, timeout=timeout)
 
-    # ── auth ──
+    # ── auth: вход по SMS ──
+    async def start_auth_sms(self, phone: str) -> str:
+        cmd, _, decoded, raw = await self._request(17, {
+            "phone": phone,
+            "type": "START_AUTH",
+        })
+        if cmd != 1:
+            raise RuntimeError(self._err_message(decoded) or f"AUTH_REQUEST cmd={cmd}")
+        token = self._find_long_token(raw)
+        if not token:
+            raise RuntimeError("verify-token не извлечён из ответа")
+        return token
+
+    async def confirm_sms(self, verify_token: str, code: str):
+        """Возвращает ('token', auth_token) либо ('2fa', track_id)."""
+        cmd, _, decoded, raw = await self._request(18, {
+            "token": verify_token,
+            "verifyCode": code,
+            "authTokenType": "CHECK_CODE",
+        })
+        if cmd != 1:
+            msg = self._err_message(decoded)
+            raise RuntimeError(msg or "Неверный код или истёк. Запросите новый.")
+        auth = self._find_long_token(raw)
+        if auth:
+            return ("token", auth)
+        if b"passwordChallenge" in raw:
+            track = self._find_uuid(raw)
+            if not track:
+                raise RuntimeError("2FA нужен, но trackId не найден")
+            return ("2fa", track)
+        raise RuntimeError("Нет токена и нет 2FA-челленджа")
+
+    async def confirm_2fa(self, track_id: str, password: str) -> str:
+        cmd, _, decoded, raw = await self._request(115, {
+            "trackId": track_id,
+            "password": password,
+        })
+        if cmd != 1:
+            raise RuntimeError(self._err_message(decoded) or f"2FA cmd={cmd}")
+        token = self._find_long_token(raw)
+        if not token:
+            raise RuntimeError("auth-token не извлечён после 2FA")
+        return token
+
+    @staticmethod
+    def _find_long_token(data: bytes):
+        valid = set(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+            "0123456789_-+.~="
+        )
+        best = None
+        cur = []
+        for b in data:
+            c = chr(b)
+            if c in valid:
+                cur.append(c)
+            else:
+                if len(cur) > 100:
+                    t = "".join(cur)
+                    if best is None or len(t) > len(best):
+                        best = t
+                cur = []
+        if len(cur) > 100:
+            t = "".join(cur)
+            if best is None or len(t) > len(best):
+                best = t
+        return best
+
+    @staticmethod
+    def _find_uuid(data: bytes):
+        m = re.search(
+            rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            data,
+        )
+        return m.group(0).decode() if m else None
+
+    # ── auth: вход по токену ──
     async def login(self, token: str) -> dict:
         cmd, _, decoded, raw = await self._request(19, {
             "token": token,
@@ -358,6 +435,23 @@ async def handle_client(reader, writer):
         await send_json(msg)
 
     conn = MaxConn(on_push=on_push)
+    verify_token = None   # для SMS-флоу
+    track_id = None       # для 2FA
+
+    async def finish_login(auth_token):
+        """Общий финиш: LOGIN по токену, профиль, чаты. Отдаёт сам токен,
+        чтобы пользователь мог сохранить его для будущих входов."""
+        resp = await conn.login(auth_token)
+        prof = await conn.profile()
+        if isinstance(prof.get("id"), int):
+            conn.my_id = prof["id"]
+        await send_json({
+            "type": "login_ok",
+            "myId": conn.my_id,
+            "authToken": auth_token,
+            "profile": prof,
+            "chats": extract_chats(resp),
+        })
 
     try:
         while True:
@@ -373,16 +467,28 @@ async def handle_client(reader, writer):
             try:
                 if action == "login":
                     await conn.connect()
-                    resp = await conn.login(req["token"])
-                    prof = await conn.profile()
-                    if isinstance(prof.get("id"), int):
-                        conn.my_id = prof["id"]
-                    await send_json({
-                        "type": "login_ok",
-                        "myId": conn.my_id,
-                        "profile": prof,
-                        "chats": extract_chats(resp),
-                    })
+                    await finish_login(req["token"])
+
+                elif action == "request_sms":
+                    await conn.connect()
+                    verify_token = await conn.start_auth_sms(req["phone"])
+                    await send_json({"type": "sms_sent"})
+
+                elif action == "confirm_sms":
+                    if not verify_token:
+                        raise RuntimeError("SMS не запрошен")
+                    kind, value = await conn.confirm_sms(verify_token, req["code"])
+                    if kind == "token":
+                        await finish_login(value)
+                    else:
+                        track_id = value
+                        await send_json({"type": "need_2fa"})
+
+                elif action == "confirm_2fa":
+                    if not track_id:
+                        raise RuntimeError("2FA-челлендж отсутствует")
+                    auth = await conn.confirm_2fa(track_id, req["password"])
+                    await finish_login(auth)
 
                 elif action == "history":
                     msgs = await conn.chat_history(
