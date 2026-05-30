@@ -42,6 +42,14 @@ class SessionController extends Notifier<SessionState> {
 
   Future<void> _bootstrap() async {
     final repo = ref.read(authRepositoryProvider);
+    // Мёртвый токен (FAIL_LOGIN_TOKEN) во время reconnect → разлогин.
+    repo.client.onAuthInvalid = () async {
+      await repo.storage.wipe();
+      state = const SessionState(
+        status: SessionStatus.signedOut,
+        error: 'Сессия истекла, войдите снова',
+      );
+    };
     final ok = await repo.tryRestoreSession();
     state = SessionState(
       status: ok ? SessionStatus.signedIn : SessionStatus.signedOut,
