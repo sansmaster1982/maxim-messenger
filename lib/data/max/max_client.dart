@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/constants.dart';
 import '../../core/errors.dart';
+import 'lz4_block.dart';
 import 'max_codec.dart';
 import 'models/incoming_message.dart';
 import 'raw_parsers.dart';
@@ -492,6 +493,23 @@ class MaxClient {
     return s.length > 200 ? '${s.substring(0, 200)}...(${s.length})' : s;
   }
 
+  /// Распаковка тела кадра по флагу cof. LZ4 — чистый Dart. zstd (cof=0xFF)
+  /// без нативной библиотеки не распакуем — логируем и отдаём сырое
+  /// (такие кадры редки; основной трафик — LZ4 cof>0).
+  Uint8List _decompressBody(int cof, int payloadLen, Uint8List body) {
+    if (cof == 0 || body.isEmpty) return body;
+    if (cof == 0xFF) {
+      _log.w('zstd-кадр (cof=0xFF) не распакован — нет нативного zstd');
+      return body;
+    }
+    try {
+      return Lz4Block.decompress(body, payloadLen * cof);
+    } catch (e) {
+      _log.w('LZ4 decompress failed (cof=$cof len=$payloadLen): $e');
+      return body;
+    }
+  }
+
   void _onData(Uint8List chunk) {
     _bufferBuilder.add(chunk);
     while (true) {
@@ -507,6 +525,9 @@ class MaxClient {
       final opcode = (buf[4] << 8) | buf[5];
       final lenRaw =
           (buf[6] << 24) | (buf[7] << 16) | (buf[8] << 8) | buf[9];
+      // Старший байт длины = флаг сжатия (cof): 0 нет, 0xFF zstd, >0 LZ4
+      // (размер распаковки = payloadLen * cof). Источник: e1d.java/lp.java.
+      final cof = (lenRaw >> 24) & 0xFF;
       final payloadLen = lenRaw & 0x00FFFFFF;
       final total = 10 + payloadLen;
       if (buf.length < total) {
@@ -516,7 +537,8 @@ class MaxClient {
         return;
       }
 
-      final body = Uint8List.sublistView(buf, 10, total);
+      final rawBody = Uint8List.sublistView(buf, 10, total);
+      final body = _decompressBody(cof, payloadLen, rawBody);
       final decoded = MaxCodec.tryUnpack(body);
       final frame = MaxFrame(
         cmd: cmd,
