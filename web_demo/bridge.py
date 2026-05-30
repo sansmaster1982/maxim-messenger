@@ -100,7 +100,10 @@ class MaxConn:
         self.token = None
         self.my_id = None
 
-    async def connect(self):
+    async def connect(self, device_type: str = "ANDROID"):
+        """device_type: ANDROID для SMS-флоу, WEB для входа по веб-токену.
+        Веб-токены из web.max.ru сервер принимает только при deviceType=WEB
+        (проверено: с ANDROID возвращается login.cred = FAIL_WRONG_PASSWORD)."""
         ctx = ssl.create_default_context()
         self._reader, self._writer = await asyncio.open_connection(
             HOST, PORT, ssl=ctx
@@ -109,7 +112,7 @@ class MaxConn:
         self._reader_task = asyncio.create_task(self._reader_loop())
         cmd, _, _, _ = await self._request(6, {
             "userAgent": {
-                "deviceType": "ANDROID",
+                "deviceType": device_type,
                 "locale": "ru",
                 "appVersion": APP_VERSION,
             },
@@ -503,11 +506,12 @@ async def handle_client(reader, writer):
 
             try:
                 if action == "login":
-                    await conn.connect()
+                    # Веб-токены принимаются только при deviceType=WEB.
+                    await conn.connect(device_type="WEB")
                     await finish_login(req["token"])
 
                 elif action == "request_sms":
-                    await conn.connect()
+                    await conn.connect(device_type="ANDROID")
                     verify_token = await conn.start_auth_sms(req["phone"])
                     await send_json({"type": "sms_sent"})
 
