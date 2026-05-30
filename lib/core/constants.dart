@@ -42,4 +42,5 @@ class AppMeta {
   static const String dbName = 'maxim.db';
   static const String secureTokenKey = 'max_auth_token';
   static const String prefMyUserIdKey = 'my_max_user_id';
+  static const String tokenKindKey = 'max_token_kind';
 }

@@ -106,6 +106,23 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
+  /// Вход по готовому auth-token (вкладка «По токену» в LoginScreen).
+  Future<void> loginWithToken(String token) async {
+    final repo = ref.read(authRepositoryProvider);
+    state = state.copyWith(error: null);
+    final t = token.trim();
+    if (t.isEmpty) {
+      state = state.copyWith(error: 'Вставьте токен');
+      return;
+    }
+    try {
+      await repo.loginWithToken(t);
+      state = const SessionState(status: SessionStatus.signedIn);
+    } catch (e) {
+      state = state.copyWith(error: _humanError(e));
+    }
+  }
+
   Future<void> logout() async {
     final repo = ref.read(authRepositoryProvider);
     await repo.logout();

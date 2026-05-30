@@ -30,8 +30,17 @@ class SecureStorage {
   Future<void> deleteMyUserId() =>
       _backend.delete(key: AppMeta.prefMyUserIdKey);
 
+  /// Тип устройства, под которым выдан токен: 'web' (веб-токен из
+  /// web.max.ru) или 'android' (вход по SMS). Нужно чтобы при восстановлении
+  /// сессии слать серверу тот же deviceType — иначе токен не примут.
+  Future<String?> readTokenKind() =>
+      _backend.read(key: AppMeta.tokenKindKey);
+  Future<void> writeTokenKind(String kind) =>
+      _backend.write(key: AppMeta.tokenKindKey, value: kind);
+
   Future<void> wipe() async {
     await deleteToken();
     await deleteMyUserId();
+    await _backend.delete(key: AppMeta.tokenKindKey);
   }
 }

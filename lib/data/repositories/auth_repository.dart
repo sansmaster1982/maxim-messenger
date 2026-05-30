@@ -23,11 +23,14 @@ class AuthRepository {
   String? _trackId;
 
   /// Попытаться восстановить сессию из secure storage. true - вошли.
+  /// deviceType берём из сохранённого kind — веб-токен требует WEB.
   Future<bool> tryRestoreSession() async {
     final saved = await storage.readToken();
     if (saved == null) return false;
+    final kind = await storage.readTokenKind() ?? 'android';
+    final deviceType = kind == 'web' ? 'WEB' : 'ANDROID';
     try {
-      if (!client.isConnected) await client.connect();
+      if (!client.isConnected) await client.connect(deviceType: deviceType);
       await client.login(saved);
       try {
         final me = await client.currentProfile();
@@ -39,6 +42,25 @@ class AuthRepository {
       _log.w('tryRestoreSession failed: $e');
       await storage.deleteToken();
       return false;
+    }
+  }
+
+  /// Вход по готовому auth-token (например из web.max.ru). Веб-токены
+  /// сервер принимает только при deviceType=WEB — иначе FAIL_WRONG_PASSWORD.
+  Future<void> loginWithToken(String token) async {
+    if (client.isConnected) {
+      await client.close();
+    }
+    await client.connect(deviceType: 'WEB');
+    await client.login(token);
+    await storage.writeToken(token);
+    await storage.writeTokenKind('web');
+    try {
+      final me = await client.currentProfile();
+      final id = me['id'];
+      if (id is int) await storage.writeMyUserId(id);
+    } catch (e) {
+      _log.w('profile load failed after token login: $e');
     }
   }
 
@@ -128,6 +150,7 @@ class AuthRepository {
 
   Future<void> _completeLogin(String token) async {
     await storage.writeToken(token);
+    await storage.writeTokenKind('android');
     await client.login(token);
     try {
       final me = await client.currentProfile();
