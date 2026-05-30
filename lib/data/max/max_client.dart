@@ -31,6 +31,11 @@ class MaxClient {
   final Logger _log;
   late final _ReconnectManager _reconnect;
 
+  /// Вызывается когда сервер отверг сохранённый токен (FAIL_LOGIN_TOKEN) —
+  /// UI должен разлогинить и показать экран входа, а не висеть в reconnect.
+  void Function()? _authInvalid;
+  set onAuthInvalid(void Function()? cb) => _authInvalid = cb;
+
   String? _token;
   String get deviceId => _deviceId;
   final String _deviceId = const Uuid().v4();
@@ -822,6 +827,17 @@ class _ReconnectManager {
       _running = false;
     } catch (e) {
       _log.w('reconnect attempt failed: $e');
+      // Токен мёртв (FAIL_LOGIN_TOKEN / login.cred / login.token) — нет смысла
+      // долбить сервер протухшим токеном. Останавливаем цикл, чистим токен и
+      // сигналим, чтобы UI вышел на экран входа.
+      if (e is MaxLoginFailed) {
+        _client._token = null;
+        _running = false;
+        _cancelled = true;
+        _client._emitState(MaxConnectionState.disconnected);
+        _client._authInvalid?.call();
+        return;
+      }
       // Удваиваем, но не больше cap.
       final next = _delay * 2;
       _delay = next > _maxDelay ? _maxDelay : next;
