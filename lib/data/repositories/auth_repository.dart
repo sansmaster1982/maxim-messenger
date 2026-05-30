@@ -65,19 +65,31 @@ class AuthRepository {
   }
 
   Future<void> requestSms(String phone) async {
-    _verifyToken = await _withFreshConnection(() => client.startAuthSms(phone));
+    // SMS-флоу — всегда ANDROID. Если до этого было WEB-соединение
+    // (вход по токену), закрываем его и поднимаем чистое ANDROID, иначе
+    // _deviceType остался бы WEB и сервер обработал бы запрос иначе.
+    if (client.isConnected) {
+      await client.close();
+    }
+    _verifyToken = await _withFreshConnection(
+      () => client.startAuthSms(phone),
+      deviceType: 'ANDROID',
+    );
   }
 
   /// Гарантирует живое TLS-соединение и выполняет [op]. Если соединение упало
   /// в течение нескольких миллисекунд после connect (race condition при
   /// устаревшем APP_VERSION или сервер DROP'ит INIT) — делает один retry с
   /// небольшой паузой.
-  Future<T> _withFreshConnection<T>(Future<T> Function() op) async {
+  Future<T> _withFreshConnection<T>(
+    Future<T> Function() op, {
+    String deviceType = 'ANDROID',
+  }) async {
     Object? lastErr;
     for (var attempt = 0; attempt < 2; attempt++) {
       if (!client.isConnected) {
         try {
-          await client.connect();
+          await client.connect(deviceType: deviceType);
         } catch (e) {
           lastErr = e;
           if (attempt == 0) {
@@ -111,12 +123,12 @@ class AuthRepository {
     if (vt == null) throw StateError('SMS не запрошен');
     if (!client.isConnected) {
       try {
-        await client.connect();
+        await client.connect(deviceType: 'ANDROID');
       } catch (e) {
         // Если коннект упал ДО отправки confirmSms — verify-token не использован,
         // можно попробовать ещё раз через 500мс.
         await Future<void>.delayed(const Duration(milliseconds: 500));
-        await client.connect();
+        await client.connect(deviceType: 'ANDROID');
       }
     }
     final r = await client.confirmSms(vt, code);
