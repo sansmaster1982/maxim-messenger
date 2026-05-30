@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>MAX — Maxim</title>
+<style>
+  :root {
+    --max-blue: #0066FF;
+    --max-blue-dark: #0052cc;
+    --bg: #ffffff;
+    --bg-side: #ffffff;
+    --bg-chat: #f0f2f5;
+    --bubble-in: #ffffff;
+    --bubble-out: #cfe3ff;
+    --text: #1c1c1e;
+    --text-sub: #8a8a8e;
+    --divider: #e6e6ea;
+    --unread: #0066FF;
+    --hover: #f5f6f8;
+    --active: #e9f1ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0e10;
+      --bg-side: #161618;
+      --bg-chat: #0a0a0b;
+      --bubble-in: #1f1f23;
+      --bubble-out: #1c3a66;
+      --text: #f2f2f7;
+      --text-sub: #8a8a8e;
+      --divider: #26262a;
+      --hover: #1c1c20;
+      --active: #15233a;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg-chat);
+    color: var(--text);
+    display: flex;
+    overflow: hidden;
+  }
+  .app { display: flex; width: 100%; height: 100vh; }
+
+  /* ───────── Sidebar (chat list) ───────── */
+  .sidebar {
+    width: 380px;
+    min-width: 380px;
+    background: var(--bg-side);
+    border-right: 1px solid var(--divider);
+    display: flex;
+    flex-direction: column;
+  }
+  .side-header {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+    border-bottom: 1px solid var(--divider);
+  }
+  .logo {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: var(--max-blue);
+    color: #fff; font-weight: 800; font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    letter-spacing: -1px;
+  }
+  .side-title { font-size: 20px; font-weight: 700; flex: 1; }
+  .icon-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: none; background: transparent; cursor: pointer;
+    color: var(--text-sub); display: flex; align-items: center; justify-content: center;
+    transition: background .15s;
+  }
+  .icon-btn:hover { background: var(--hover); }
+  .icon-btn svg { width: 22px; height: 22px; }
+
+  .search-wrap { padding: 8px 12px; }
+  .search {
+    width: 100%; height: 40px; border-radius: 20px;
+    border: none; background: var(--bg-chat);
+    padding: 0 16px 0 40px; font-size: 15px; color: var(--text);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' fill='none' stroke='%238a8a8e' stroke-width='2' viewBox='0 0 24 24'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 14px center;
+    outline: none;
+  }
+  .search:focus { background-color: var(--active); }
+
+  .chat-list { flex: 1; overflow-y: auto; }
+  .chat-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; cursor: pointer; position: relative;
+    transition: background .12s;
+  }
+  .chat-item:hover { background: var(--hover); }
+  .chat-item.active { background: var(--active); }
+  .avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 600; font-size: 20px; overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .chat-mid { flex: 1; min-width: 0; }
+  .chat-row1 { display: flex; justify-content: space-between; align-items: baseline; }
+  .chat-name { font-weight: 600; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chat-time { font-size: 12px; color: var(--text-sub); flex-shrink: 0; margin-left: 8px; }
+  .chat-row2 { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; }
+  .chat-preview { font-size: 14px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge {
+    min-width: 20px; height: 20px; border-radius: 10px;
+    background: var(--unread); color: #fff; font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; padding: 0 6px;
+    flex-shrink: 0; margin-left: 8px;
+  }
+  .pin { color: var(--text-sub); transform: rotate(45deg); }
+
+  /* ───────── Chat panel ───────── */
+  .chat-panel { flex: 1; display: flex; flex-direction: column; background: var(--bg-chat); }
+  .chat-header {
+    height: 56px; background: var(--bg-side); border-bottom: 1px solid var(--divider);
+    display: flex; align-items: center; padding: 0 12px; gap: 12px;
+  }
+  .back-btn { display: none; }
+  .ch-avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; }
+  .ch-info { flex: 1; min-width: 0; }
+  .ch-name { font-weight: 600; font-size: 16px; }
+  .ch-status { font-size: 13px; color: var(--text-sub); }
+  .ch-status.online { color: var(--max-blue); }
+
+  .messages {
+    flex: 1; overflow-y: auto; padding: 16px 8% 8px;
+    display: flex; flex-direction: column; gap: 2px;
+    background-image: radial-gradient(circle at 50% 0, rgba(0,102,255,.03), transparent 60%);
+  }
+  .date-divider { align-self: center; margin: 12px 0; background: rgba(0,0,0,.06); color: var(--text-sub);
+    font-size: 12px; padding: 4px 12px; border-radius: 12px; }
+  @media (prefers-color-scheme: dark) { .date-divider { background: rgba(255,255,255,.08); } }
+
+  .msg { max-width: 70%; padding: 7px 12px; border-radius: 16px; font-size: 15px; line-height: 1.35;
+    position: relative; word-wrap: break-word; margin-top: 2px; }
+  .msg .meta { font-size: 11px; color: var(--text-sub); margin-top: 3px; text-align: right; display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+  .msg.in { align-self: flex-start; background: var(--bubble-in); border-bottom-left-radius: 5px; box-shadow: 0 1px 1px rgba(0,0,0,.05); }
+  .msg.out { align-self: flex-end; background: var(--bubble-out); border-bottom-right-radius: 5px; }
+  .msg.grouped { margin-top: 2px; }
+  .check { color: var(--max-blue); font-weight: 700; }
+
+  .msg-media img { max-width: 260px; max-height: 320px; border-radius: 12px; display: block; cursor: pointer; }
+  .msg-media video { max-width: 280px; border-radius: 12px; display: block; }
+  .file-card { display: flex; align-items: center; gap: 10px; padding: 6px 4px; min-width: 200px; }
+  .file-ico { width: 44px; height: 44px; border-radius: 10px; background: var(--max-blue); color: #fff;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .file-name { font-weight: 600; font-size: 14px; }
+  .file-size { font-size: 12px; color: var(--text-sub); }
+  .caption { margin-top: 4px; }
+
+  /* ───────── Composer ───────── */
+  .composer {
+    background: var(--bg-side); border-top: 1px solid var(--divider);
+    padding: 8px 12px; display: flex; align-items: flex-end; gap: 8px;
+  }
+  .composer textarea {
+    flex: 1; border: none; resize: none; background: var(--bg-chat);
+    border-radius: 20px; padding: 10px 16px; font-size: 15px; color: var(--text);
+    max-height: 120px; min-height: 42px; outline: none; font-family: inherit; line-height: 1.3;
+  }
+  .composer textarea:focus { background: var(--active); }
+  .send-btn {
+    width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--max-blue); color: #fff; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: background .15s, transform .1s;
+  }
+  .send-btn:hover { background: var(--max-blue-dark); }
+  .send-btn:active { transform: scale(.92); }
+
+  /* attach preview strip */
+  .attach-strip { display: flex; gap: 8px; padding: 8px 12px 0; flex-wrap: wrap; }
+  .attach-chip { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg-chat);
+    border: 1px solid var(--divider); }
+  .attach-chip img { width: 64px; height: 64px; object-fit: cover; display: block; }
+  .attach-chip .file { width: 160px; height: 64px; display: flex; align-items: center; gap: 8px; padding: 8px; }
+  .attach-chip .x { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(0,0,0,.6); color: #fff; border: none; cursor: pointer; font-size: 13px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; }
+
+  /* empty state */
+  .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-sub); gap: 12px; }
+  .empty .logo { width: 72px; height: 72px; border-radius: 20px; font-size: 36px; }
+
+  /* lightbox */
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 92%; max-height: 92%; border-radius: 8px; }
+  .lightbox .close { position: absolute; top: 20px; right: 24px; color: #fff; font-size: 32px; cursor: pointer; background: none; border: none; }
+
+  /* mobile */
+  @media (max-width: 820px) {
+    .sidebar { width: 100%; min-width: 0; }
+    .chat-panel { position: fixed; inset: 0; transform: translateX(100%); transition: transform .25s; z-index: 20; }
+    .app.chat-open .chat-panel { transform: translateX(0); }
+    .back-btn { display: flex; }
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="side-header">
+      <div class="logo">M</div>
+      <div class="side-title">MAX</div>
+      <button class="icon-btn" title="Новый чат">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="icon-btn" title="Меню">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+    <div class="search-wrap">
+      <input class="search" id="search" placeholder="Поиск">
+    </div>
+    <div class="chat-list" id="chatList"></div>
+  </aside>
+
+  <!-- Chat panel -->
+  <section class="chat-panel" id="chatPanel">
+    <div class="empty" id="emptyState">
+      <div class="logo">M</div>
+      <div>Выберите чат, чтобы начать общение</div>
+    </div>
+
+    <div id="chatView" style="display:none; flex:1; flex-direction:column; height:100%;">
+      <div class="chat-header">
+        <button class="icon-btn back-btn" id="backBtn">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <div class="ch-avatar" id="chAvatar"></div>
+        <div class="ch-info">
+          <div class="ch-name" id="chName"></div>
+          <div class="ch-status" id="chStatus"></div>
+        </div>
+        <button class="icon-btn" title="Поиск"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
+        <button class="icon-btn" title="Ещё"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></button>
+      </div>
+
+      <div class="messages" id="messages"></div>
+
+      <div class="attach-strip" id="attachStrip"></div>
+      <div class="composer">
+        <input type="file" id="fileInput" accept="image/*,video/*" multiple hidden>
+        <input type="file" id="docInput" multiple hidden>
+        <button class="icon-btn" id="attachBtn" title="Прикрепить">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a5.5 5.5 0 0 1-7.78-7.78l9.19-9.19a3.5 3.5 0 1 1 4.95 4.95l-9.2 9.19a1.5 1.5 0 0 1-2.12-2.12l8.49-8.49"/></svg>
+        </button>
+        <textarea id="composerInput" placeholder="Сообщение" rows="1"></textarea>
+        <button class="send-btn" id="sendBtn" title="Отправить">
+          <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="lightbox" id="lightbox">
+  <button class="close" id="lbClose">&times;</button>
+  <img id="lbImg" alt="">
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+//  Демо-данные. В реальном клиенте сюда приходят чаты/сообщения
+//  из MaxClient (api.oneme.ru, opcode 48/49/64/80/87/88).
+//  Браузер не умеет raw-TLS к oneme.ru напрямую, поэтому здесь mock.
+// ─────────────────────────────────────────────────────────────
+const COLORS = ['#FF6B6B','#4ECDC4','#FFD93D','#6C5CE7','#00B894','#0984E3','#E17055','#E84393'];
+function colorFor(id){ return COLORS[Math.abs(id) % COLORS.length]; }
+function initials(name){ return (name||'?').trim().charAt(0).toUpperCase(); }
+function fmtTime(ts){ const d=new Date(ts); return d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0'); }
+function fmtSize(b){ if(b<1024)return b+' Б'; if(b<1048576)return (b/1024).toFixed(1)+' КБ'; return (b/1048576).toFixed(1)+' МБ'; }
+
+const me = { id: 1, name: 'Я' };
+
+const chats = [
+  { id: 101, name: 'Алексей Морозов', color: '#0984E3', online: true, pinned: true, unread: 0,
+    msgs: [
+      { id:1, out:false, text:'Привет! Как там форк MAX продвигается?', ts: Date.now()-3600_000*5 },
+      { id:2, out:true,  text:'Уже текст и медиа работают. Сейчас тестирую отправку файлов.', ts: Date.now()-3600_000*5+60000, status:'read' },
+      { id:3, out:false, text:'Огонь. А историю подтягивает?', ts: Date.now()-3600_000*5+120000 },
+      { id:4, out:true,  text:'Да, пагинация по opcode 49. Скролл вверх — догружает старые.', ts: Date.now()-3600_000*5+180000, status:'read' },
+    ]},
+  { id: 102, name: 'Рабочий чат', color: '#6C5CE7', online: false, unread: 3,
+    msgs: [
+      { id:1, out:false, sender:'Марина', text:'Кто сегодня дежурный по релизу?', ts: Date.now()-3600_000*2 },
+      { id:2, out:false, sender:'Дмитрий', text:'Я. APK уже собрал через WSL.', ts: Date.now()-3600_000*2+90000 },
+      { id:3, out:false, sender:'Марина', text:'Скинь в чат, проверим', ts: Date.now()-3600_000*1.5 },
+    ]},
+  { id: 103, name: 'Мама', color: '#E84393', online: false, unread: 0,
+    msgs: [
+      { id:1, out:false, text:'Покушал?', ts: Date.now()-86400_000 },
+      { id:2, out:true,  text:'Да, мам, всё хорошо :)', ts: Date.now()-86400_000+300000, status:'read' },
+    ]},
+  { id: 104, name: 'Технические заметки', color: '#00B894', online: false, unread: 0,
+    msgs: [
+      { id:1, out:true, text:'Опкоды медиа: 80 PHOTO_UPLOAD, 82 VIDEO_UPLOAD, 87 FILE_UPLOAD, 88 DOWNLOAD', ts: Date.now()-86400_000*2, status:'sent' },
+    ]},
+];
+
+let activeChatId = null;
+
+// ───────── render chat list ─────────
+const chatListEl = document.getElementById('chatList');
+function lastPreview(c){
+  const m = c.msgs[c.msgs.length-1];
+  if(!m) return '';
+  if(m.media) return m.media.kind==='file' ? '📎 '+m.media.name : (m.media.kind==='video'?'🎬 Видео':'🖼 Фото');
+  return (m.out?'Вы: ':'')+m.text;
+}
+function renderChatList(filter=''){
+  chatListEl.innerHTML='';
+  chats
+    .filter(c=>c.name.toLowerCase().includes(filter.toLowerCase()))
+    .sort((a,b)=> (b.pinned?1:0)-(a.pinned?1:0))
+    .forEach(c=>{
+      const last = c.msgs[c.msgs.length-1];
+      const div = document.createElement('div');
+      div.className='chat-item'+(c.id===activeChatId?' active':'');
+      div.onclick=()=>openChat(c.id);
+      div.innerHTML = `
+        <div class="avatar" style="background:${c.color}">${initials(c.name)}</div>
+        <div class="chat-mid">
+          <div class="chat-row1">
+            <span class="chat-name">${esc(c.name)}</span>
+            <span class="chat-time">${last?fmtTime(last.ts):''}</span>
+          </div>
+          <div class="chat-row2">
+            <span class="chat-preview">${esc(lastPreview(c))}</span>
+            ${c.unread>0?`<span class="badge">${c.unread}</span>`:(c.pinned?`<span class="pin">📌</span>`:'')}
+          </div>
+        </div>`;
+      chatListEl.appendChild(div);
+    });
+}
+function esc(s){ return (s||'').replace(/[&<>"]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch])); }
+
+// ───────── open chat ─────────
+const messagesEl = document.getElementById('messages');
+function openChat(id){
+  activeChatId = id;
+  const c = chats.find(x=>x.id===id);
+  c.unread = 0;
+  document.getElementById('emptyState').style.display='none';
+  document.getElementById('chatView').style.display='flex';
+  document.getElementById('app').classList.add('chat-open');
+  document.getElementById('chName').textContent=c.name;
+  document.getElementById('chStatus').textContent=c.online?'в сети':'был(а) недавно';
+  document.getElementById('chStatus').className='ch-status'+(c.online?' online':'');
+  const av=document.getElementById('chAvatar'); av.textContent=initials(c.name); av.style.background=c.color;
+  renderMessages(c);
+  renderChatList(document.getElementById('search').value);
+}
+function dayLabel(ts){
+  const d=new Date(ts), now=new Date();
+  const same=(a,b)=>a.toDateString()===b.toDateString();
+  if(same(d,now)) return 'Сегодня';
+  const y=new Date(now); y.setDate(now.getDate()-1);
+  if(same(d,y)) return 'Вчера';
+  return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long'});
+}
+function renderMessages(c){
+  messagesEl.innerHTML='';
+  let lastDay='';
+  c.msgs.forEach((m,i)=>{
+    const day=dayLabel(m.ts);
+    if(day!==lastDay){ lastDay=day;
+      const dd=document.createElement('div'); dd.className='date-divider'; dd.textContent=day; messagesEl.appendChild(dd);
+    }
+    const el=document.createElement('div');
+    el.className='msg '+(m.out?'out':'in');
+    let inner='';
+    if(!m.out && m.sender) inner+=`<div style="font-weight:600;font-size:13px;color:${colorFor(i+7)}">${esc(m.sender)}</div>`;
+    if(m.media){
+      if(m.media.kind==='image') inner+=`<div class="msg-media"><img src="${m.media.url}" onclick="openLightbox('${m.media.url}')"></div>`;
+      else if(m.media.kind==='video') inner+=`<div class="msg-media"><video src="${m.media.url}" controls></video></div>`;
+      else inner+=`<div class="file-card"><div class="file-ico"><svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div><div><div class="file-name">${esc(m.media.name)}</div><div class="file-size">${fmtSize(m.media.size)}</div></div></div>`;
+    }
+    if(m.text) inner+=`<div class="${m.media?'caption':''}">${esc(m.text)}</div>`;
+    inner+=`<div class="meta">${fmtTime(m.ts)}${m.out?` <span class="check">${m.status==='read'?'✓✓':'✓'}</span>`:''}</div>`;
+    el.innerHTML=inner;
+    messagesEl.appendChild(el);
+  });
+  messagesEl.scrollTop=messagesEl.scrollHeight;
+}
+
+// ───────── compose / send ─────────
+const input=document.getElementById('composerInput');
+const attachStrip=document.getElementById('attachStrip');
+let pendingAttach=[]; // {kind,url,name,size,file}
+
+input.addEventListener('input',()=>{ input.style.height='auto'; input.style.height=Math.min(input.scrollHeight,120)+'px'; });
+input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); send(); }});
+document.getElementById('sendBtn').onclick=send;
+
+function send(){
+  const c=chats.find(x=>x.id===activeChatId); if(!c) return;
+  const text=input.value.trim();
+  if(!text && pendingAttach.length===0) return;
+  if(pendingAttach.length){
+    pendingAttach.forEach((a,idx)=>{
+      c.msgs.push({ id:Date.now()+idx, out:true, status:'sent', ts:Date.now(),
+        media:{kind:a.kind,url:a.url,name:a.name,size:a.size},
+        text: idx===pendingAttach.length-1 ? text : '' });
+    });
+  } else {
+    c.msgs.push({ id:Date.now(), out:true, status:'sent', text, ts:Date.now() });
+  }
+  input.value=''; input.style.height='auto';
+  pendingAttach=[]; renderAttachStrip();
+  renderMessages(c); renderChatList(document.getElementById('search').value);
+  // имитация доставки + ответа
+  setTimeout(()=>{ const lm=c.msgs[c.msgs.length-1]; if(lm&&lm.out){lm.status='read'; if(c.id===activeChatId)renderMessages(c);} },1200);
+}
+
+// ───────── attach ─────────
+document.getElementById('attachBtn').onclick=()=>{
+  // простое меню: фото/видео или документ
+  const menu=confirm('OK — Фото/Видео\nОтмена — Документ');
+  (menu?document.getElementById('fileInput'):document.getElementById('docInput')).click();
+};
+function handleFiles(files,forceDoc){
+  [...files].forEach(f=>{
+    const url=URL.createObjectURL(f);
+    let kind='file';
+    if(!forceDoc && f.type.startsWith('image/')) kind='image';
+    else if(!forceDoc && f.type.startsWith('video/')) kind='video';
+    pendingAttach.push({kind,url,name:f.name,size:f.size,file:f});
+  });
+  renderAttachStrip();
+}
+document.getElementById('fileInput').onchange=e=>handleFiles(e.target.files,false);
+document.getElementById('docInput').onchange=e=>handleFiles(e.target.files,true);
+function renderAttachStrip(){
+  attachStrip.innerHTML='';
+  pendingAttach.forEach((a,i)=>{
+    const chip=document.createElement('div'); chip.className='attach-chip';
+    if(a.kind==='image') chip.innerHTML=`<img src="${a.url}">`;
+    else if(a.kind==='video') chip.innerHTML=`<img src="${a.url}">`;
+    else chip.innerHTML=`<div class="file"><div class="file-ico" style="width:32px;height:32px">📄</div><div style="min-width:0"><div class="file-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100px">${esc(a.name)}</div><div class="file-size">${fmtSize(a.size)}</div></div></div>`;
+    const x=document.createElement('button'); x.className='x'; x.textContent='×';
+    x.onclick=()=>{ pendingAttach.splice(i,1); renderAttachStrip(); };
+    chip.appendChild(x); attachStrip.appendChild(chip);
+  });
+}
+
+// ───────── misc ─────────
+document.getElementById('search').addEventListener('input',e=>renderChatList(e.target.value));
+document.getElementById('backBtn').onclick=()=>document.getElementById('app').classList.remove('chat-open');
+function openLightbox(url){ document.getElementById('lbImg').src=url; document.getElementById('lightbox').classList.add('open'); }
+document.getElementById('lbClose').onclick=()=>document.getElementById('lightbox').classList.remove('open');
+document.getElementById('lightbox').onclick=e=>{ if(e.target.id==='lightbox') e.currentTarget.classList.remove('open'); };
+
+renderChatList();
+</script>
+</body>
+</html>
