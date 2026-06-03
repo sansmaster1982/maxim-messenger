@@ -22,8 +22,12 @@ enum MaxConnectionState { disconnected, connecting, connected, reconnecting }
 /// сабскрипшен. Запросы идут через [_request], ответы матчатся по seq.
 /// Сервер-пуш сваливается в [incomingStream].
 class MaxClient {
-  MaxClient({this.onPushDebug, Logger? logger})
-    : _log = logger ?? Logger(printer: PrettyPrinter(methodCount: 0)) {
+  MaxClient({
+    this.onPushDebug,
+    Logger? logger,
+    this.deviceIdLoader,
+    this.userAgentLoader,
+  }) : _log = logger ?? Logger(printer: PrettyPrinter(methodCount: 0)) {
     _reconnect = _ReconnectManager(this, _log);
   }
 
@@ -31,14 +35,47 @@ class MaxClient {
   final Logger _log;
   late final _ReconnectManager _reconnect;
 
+  /// Источник стабильного deviceId. Вызывается один раз перед первым INIT,
+  /// результат кешируется на всё время жизни клиента. Если null (например в
+  /// CLI), генерируется разовый UUID — как в python-клиенте.
+  final Future<String> Function()? deviceIdLoader;
+
+  /// Источник поля `userAgent` для INIT по текущему deviceType. Если null или
+  /// бросает — используется минимальный проверенный набор. См. DeviceProfile.
+  final Future<Map<String, Object?>> Function(String deviceType)?
+      userAgentLoader;
+
   /// Вызывается когда сервер отверг сохранённый токен (FAIL_LOGIN_TOKEN) —
   /// UI должен разлогинить и показать экран входа, а не висеть в reconnect.
   void Function()? _authInvalid;
   set onAuthInvalid(void Function()? cb) => _authInvalid = cb;
 
   String? _token;
-  String get deviceId => _deviceId;
-  final String _deviceId = const Uuid().v4();
+  String get deviceId => _deviceId ?? '(unresolved)';
+
+  /// Кеш разрешённого deviceId. null до первого [_resolveDeviceId].
+  String? _deviceId;
+
+  /// Разрешить deviceId один раз: сперва из loader (persisted), при его
+  /// отсутствии — разовый UUID. Повторные вызовы возвращают тот же id, чтобы
+  /// reconnect не менял идентичность устройства внутри одной сессии.
+  Future<String> _resolveDeviceId() async {
+    final cached = _deviceId;
+    if (cached != null) return cached;
+    String? loaded;
+    if (deviceIdLoader != null) {
+      try {
+        loaded = await deviceIdLoader!();
+      } catch (e) {
+        _log.w('deviceIdLoader failed, fallback to ephemeral: $e');
+      }
+    }
+    final resolved = (loaded != null && loaded.isNotEmpty)
+        ? loaded
+        : const Uuid().v4();
+    _deviceId = resolved;
+    return resolved;
+  }
 
   SecureSocket? _socket;
   StreamSubscription<Uint8List>? _sub;
@@ -134,16 +171,35 @@ class MaxClient {
   }
 
   Future<void> _initSession() async {
+    final deviceId = await _resolveDeviceId();
+    final userAgent = await _resolveUserAgent();
     final f = await _request(MaxOp.init, {
-      'userAgent': {
-        'deviceType': _deviceType,
-        'locale': MaxProto.locale,
-        'appVersion': MaxProto.appVersion,
-      },
-      'deviceId': _deviceId,
+      'userAgent': userAgent,
+      'deviceId': deviceId,
     });
     if (f.cmd != 1) {
       throw MaxError('INIT failed cmd=${f.cmd}');
+    }
+  }
+
+  /// Минимальный userAgent — проверен рабочим python-клиентом, используется
+  /// как fallback и для WEB.
+  Map<String, Object?> _minimalUserAgent() => {
+    'deviceType': _deviceType,
+    'locale': MaxProto.locale,
+    'appVersion': MaxProto.appVersion,
+  };
+
+  Future<Map<String, Object?>> _resolveUserAgent() async {
+    final loader = userAgentLoader;
+    if (loader == null) return _minimalUserAgent();
+    try {
+      final ua = await loader(_deviceType);
+      if (ua.isEmpty) return _minimalUserAgent();
+      return ua;
+    } catch (e) {
+      _log.w('userAgentLoader failed, fallback to minimal: $e');
+      return _minimalUserAgent();
     }
   }
 

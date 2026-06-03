@@ -4,8 +4,15 @@ class MaxProto {
   static const int port = 443;
   static const int protoVersion = 10;
   static const String appVersion = '26.15.0';
+
+  /// versionCode официального APK (max_full.apk). Идёт в userAgent.buildNumber
+  /// и должен быть согласован с [appVersion] (26.15.0 → 6689).
+  static const int appBuild = 6689;
   static const String deviceType = 'ANDROID';
   static const String locale = 'ru';
+
+  /// Полная локаль устройства для userAgent.deviceLocale (officical-формат).
+  static const String deviceLocale = 'ru_RU';
 }
 
 /// Опкоды, известные на текущий момент.
@@ -43,4 +50,10 @@ class AppMeta {
   static const String secureTokenKey = 'max_auth_token';
   static const String prefMyUserIdKey = 'my_max_user_id';
   static const String tokenKindKey = 'max_token_kind';
+
+  /// Стабильный идентификатор устройства. Генерируется один раз и хранится
+  /// в secure storage. Переживает logout/login (это физически то же
+  /// устройство), переустановку — нет. Регенерация при каждом запуске
+  /// выглядит для антифрода MAX как поток новых устройств на одном номере.
+  static const String deviceIdKey = 'max_device_id';
 }

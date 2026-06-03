@@ -69,15 +69,15 @@ class ContactsListController extends AsyncNotifier<List<MaxContact>> {
     state = AsyncData(_applyFilter(_all, _query));
   }
 
-  /// Возвращает количество найденных в MAX. Прогресс пробрасывается
-  /// callback'ом, окончательное число — через возвращаемое значение.
-  Future<int> importFromAddressBook({
+  /// Возвращает (найдено, проверено, пропущено-сверх-лимита). Прогресс
+  /// пробрасывается callback'ом, итог — через возвращаемое значение.
+  Future<({int found, int checked, int skipped})> importFromAddressBook({
     void Function(ImportProgress progress)? onProgress,
   }) async {
     final repo = await _ensureRepo();
     onProgress?.call(ImportProgress.idle.copyWith(running: true));
     try {
-      final found = await repo.importFromAddressBook(
+      final result = await repo.importFromAddressBook(
         onProgress: (done, total) {
           onProgress?.call(ImportProgress(
             done: done,
@@ -92,9 +92,9 @@ class ContactsListController extends AsyncNotifier<List<MaxContact>> {
         done: 0,
         total: 0,
         running: false,
-        found: found,
+        found: result.found,
       ));
-      return found;
+      return result;
     } catch (e) {
       onProgress?.call(ImportProgress(
         done: 0,
