@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/max/models/contact.dart';
+import '../../data/repositories/contacts_repository.dart';
 import '../../state/contacts_controller.dart';
 import '../../state/providers.dart';
 import 'chat_screen.dart';
@@ -160,6 +161,33 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
 
   Future<void> _runImport() async {
     final messenger = ScaffoldMessenger.of(context);
+
+    // Массовый резолв номеров — поведенческий бан-сигнал MAX. Предупреждаем
+    // и берём явное согласие, прежде чем перечислять справочник.
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Импорт контактов'),
+        content: const Text(
+          'MAX считает массовую проверку номеров подозрительной и может '
+          'заблокировать номер. Чтобы снизить риск, проверю не больше '
+          '${ContactsRepository.bulkLookupCap} номеров, по одному раз в '
+          '~1.5 секунды. Это займёт около минуты. Продолжить?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Продолжить'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
     final progressNotifier = ValueNotifier<ImportProgress>(
       ImportProgress.idle.copyWith(running: true),
     );
@@ -197,7 +225,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     ).then((_) => dismissed = true);
 
     try {
-      final found = await ref
+      final result = await ref
           .read(contactsListProvider.notifier)
           .importFromAddressBook(
             onProgress: (p) => progressNotifier.value = p,
@@ -205,9 +233,13 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       if (!dismissed && mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
-      messenger.showSnackBar(
-        SnackBar(content: Text('Найдено в MAX: $found')),
+      final msg = StringBuffer(
+        'Найдено в MAX: ${result.found} из ${result.checked}',
       );
+      if (result.skipped > 0) {
+        msg.write('. Пропущено сверх лимита: ${result.skipped}');
+      }
+      messenger.showSnackBar(SnackBar(content: Text(msg.toString())));
     } catch (e) {
       if (!dismissed && mounted) {
         Navigator.of(context, rootNavigator: true).pop();

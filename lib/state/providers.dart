@@ -3,6 +3,7 @@ import 'package:logger/logger.dart';
 
 import '../data/local/database.dart';
 import '../data/local/secure_storage.dart';
+import '../data/max/device_profile.dart';
 import '../data/max/max_client.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/chats_repository.dart';
@@ -25,7 +26,15 @@ final appDatabaseProvider = FutureProvider<AppDatabase>((ref) async {
 
 final maxClientProvider = Provider<MaxClient>((ref) {
   final logger = ref.watch(loggerProvider);
-  final client = MaxClient(logger: logger);
+  final storage = ref.watch(secureStorageProvider);
+  final client = MaxClient(
+    logger: logger,
+    // Стабильный deviceId на установку: убирает бан-сигнал «новое
+    // устройство на каждый запуск» на одном номере.
+    deviceIdLoader: storage.readOrCreateDeviceId,
+    // Полный официально-выглядящий userAgent для ANDROID-входа.
+    userAgentLoader: DeviceProfile.userAgent,
+  );
   ref.onDispose(client.close);
   return client;
 });

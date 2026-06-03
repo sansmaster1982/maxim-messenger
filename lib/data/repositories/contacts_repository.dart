@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter_contacts/flutter_contacts.dart';
 
@@ -59,9 +60,17 @@ class ContactsRepository {
     return db.searchContacts(query);
   }
 
-  /// Bulk-поиск контактов по списку номеров. Параллельность ограничена
-  /// батчами по 5; между батчами небольшая пауза, чтобы не давить сервер.
-  Future<int> bulkLookupByPhones(
+  /// Жёсткий потолок на число резолвов номеров за один импорт. Массовое
+  /// перечисление справочника через op=46 — главный поведенческий бан-сигнал
+  /// (по данным антифрода MAX спам/скрейпинг — причина №1 блокировок). Так
+  /// что импорт намеренно «человеческий»: мало и медленно.
+  static const int bulkLookupCap = 50;
+
+  /// Bulk-поиск контактов по списку номеров. Anti-ban профиль: строго
+  /// последовательно (не пачками), по одному запросу раз в ~1.1–1.8с с
+  /// джиттером, не более [bulkLookupCap] номеров за раз. Возвращает
+  /// (найдено, проверено, пропущено-сверх-лимита).
+  Future<({int found, int checked, int skipped})> bulkLookupByPhones(
     List<String> phones, {
     void Function(int done, int total)? onProgress,
   }) async {
@@ -70,29 +79,28 @@ class ContactsRepository {
       final n = _normalizePhone(p);
       if (n != null) cleaned.add(n);
     }
-    final list = cleaned.toList();
+    final all = cleaned.toList();
+    final list = all.length > bulkLookupCap
+        ? all.sublist(0, bulkLookupCap)
+        : all;
+    final skipped = all.length - list.length;
     final total = list.length;
     var done = 0;
     var found = 0;
+    final rng = Random();
     onProgress?.call(done, total);
 
-    const batchSize = 5;
-    for (var i = 0; i < list.length; i += batchSize) {
-      final end = (i + batchSize <= list.length) ? i + batchSize : list.length;
-      final batch = list.sublist(i, end);
-      final results = await Future.wait(
-        batch.map((p) => _lookupOne(p)),
-      );
-      for (final r in results) {
-        if (r) found++;
-      }
-      done += batch.length;
+    for (final phone in list) {
+      if (await _lookupOne(phone)) found++;
+      done++;
       onProgress?.call(done, total);
-      if (end < list.length) {
-        await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (done < total) {
+        // 1.1–1.8с между запросами: темп живого человека, не сканера.
+        final ms = 1100 + rng.nextInt(700);
+        await Future<void>.delayed(Duration(milliseconds: ms));
       }
     }
-    return found;
+    return (found: found, checked: total, skipped: skipped);
   }
 
   Future<bool> _lookupOne(String phone) async {
@@ -112,8 +120,8 @@ class ContactsRepository {
   }
 
   /// Запросить разрешение, прочитать адресную книгу, найти в MAX
-  /// тех, кто там зарегистрирован. Возвращает число найденных.
-  Future<int> importFromAddressBook({
+  /// тех, кто там зарегистрирован. Возвращает (найдено, проверено, пропущено).
+  Future<({int found, int checked, int skipped})> importFromAddressBook({
     void Function(int done, int total)? onProgress,
   }) async {
     final granted = await FlutterContacts.requestPermission(readonly: true);
@@ -132,7 +140,7 @@ class ContactsRepository {
     }
     if (phones.isEmpty) {
       onProgress?.call(0, 0);
-      return 0;
+      return (found: 0, checked: 0, skipped: 0);
     }
     return bulkLookupByPhones(phones.toList(), onProgress: onProgress);
   }
