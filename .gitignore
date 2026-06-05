@@ -49,7 +49,12 @@ app.*.map.json
 **/secrets.json
 **/local.config.json
 *.keystore
+*.jks
 key.properties
+
+# Машинно-зависимое (содержит локальные пути / username)
+**/local.properties
+**/android/local.properties
 
 # Локальные базы данных
 *.db

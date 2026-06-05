@@ -234,7 +234,7 @@ a81e1af init: Flutter-форк MAX-мессенджера
 Раньше клиент парсил **сырые сжатые байты** как msgpack → мусор `f6 2f…`, «неверные длины строк», `unhashable list`, кракозябры, пустой список чатов. Это объясняло ВСЕ проблемы с WEB-токеном (и потенциально ANDROID).
 
 ### Проверка
-Прямой запрос к серверу: LOGIN cof=4 (LZ4), 237КБ → 788КБ распаковано → распарсилось в `{profile, chats[4], messages, contacts, presence, config, token, updates}`. Чаты с именами и текстами читаются корректно (UTF-8): «А че», «<bot>» и т.д.
+Прямой запрос к серверу: LOGIN cof=4 (LZ4), 237КБ → 788КБ распаковано → распарсилось в `{profile, chats[4], messages, contacts, presence, config, token, updates}`. Чаты с именами и текстами читаются корректно (UTF-8, кириллица без артефактов).
 
 ### Сделано
 - **bridge.py**: `_decompress(cof, ln, body)` (lz4/zstandard) в `_reader_loop` перед msgpack. `_unpack` упрощён (raw=False по чистым данным). Зависимости: `pip install lz4 zstandard`.
@@ -283,7 +283,7 @@ a81e1af init: Flutter-форк MAX-мессенджера
 Тест на Samsung Galaxy S23 Ultra (SM-S918B), debug-сборка с anti-ban кодом. Два дефекта в UI.
 
 ### Среда сборки (важно для воспроизведения)
-APK на Windows собирается только при ASCII-путях. Кириллица в `C:\Users\<user>\.gradle` коверкает classpath worker-процесса Gradle под ru-локалью → `ClassNotFoundException: GradleWorkerMain`. Рабочий рецепт: проект → `C:\maxim_build`, `GRADLE_USER_HOME=C:\gradle_home`, SDK → `C:\Android\Sdk`. Раньше собиралось только через WSL (линуксовый путь). Зафиксировано в memory `env-bash-sandbox-uds-blocker`.
+APK на Windows собирается только при ASCII-путях. Кириллица в пути `GRADLE_USER_HOME` (например когда логин Windows кириллицей) коверкает classpath worker-процесса Gradle под ru-локалью → `ClassNotFoundException: GradleWorkerMain`. Рабочий рецепт: проект и `GRADLE_USER_HOME`, и SDK — все на латинских путях без пробелов (`C:\src\app`, `C:\gradle_home`, `C:\Android\Sdk`). Альтернатива — сборка через WSL (линуксовый путь ASCII).
 
 ### 1. Пароль 2FA — только цифры
 Поле 2FA имело `keyboardType: TextInputType.visiblePassword`. Samsung Keyboard рендерит visiblePassword цифровым падом — буквы в пароль не ввести. Заменено на `TextInputType.text` (obscureText скрывает ввод, autocorrect/suggestions уже выключены). `login_screen.dart`.
