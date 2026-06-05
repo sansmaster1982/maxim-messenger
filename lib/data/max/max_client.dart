@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../core/constants.dart';
 import '../../core/errors.dart';
+import 'contact_name.dart';
 import 'lz4_block.dart';
 import 'max_codec.dart';
 import 'models/incoming_message.dart';
@@ -754,7 +755,7 @@ class MaxClient {
           final mm = v.map((k, v) => MapEntry(k.toString(), v));
           return {
             'id': _toInt(mm['id']),
-            'name': mm['name']?.toString() ?? mm['names']?.toString(),
+            'name': displayContactName(mm),
             'phone': mm['phone']?.toString(),
           };
         }
