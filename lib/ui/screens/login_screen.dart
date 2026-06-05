@@ -176,7 +176,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         TextField(
           controller: _pwCtrl,
           obscureText: !_pwVisible,
-          keyboardType: TextInputType.visiblePassword,
+          // TextInputType.text, а НЕ visiblePassword: на Samsung Keyboard
+          // visiblePassword показывает цифровой пад, и буквы в пароль 2FA
+          // ввести нельзя. text даёт полную QWERTY; скрытие — через obscureText.
+          keyboardType: TextInputType.text,
           enableSuggestions: false,
           autocorrect: false,
           autofocus: true,

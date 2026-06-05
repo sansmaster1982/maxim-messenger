@@ -275,3 +275,21 @@ a81e1af init: Flutter-форк MAX-мессенджера
 
 ### Проверка
 `flutter analyze` чисто, 23 теста зелёных (+`device_profile_test` фиксирует порядок полей userAgent). Коммит `9955a18`.
+
+---
+
+## Этап 8 — Фиксы по живому тесту на устройстве (2026-06-03)
+
+Тест на Samsung Galaxy S23 Ultra (SM-S918B), debug-сборка с anti-ban кодом. Два дефекта в UI.
+
+### Среда сборки (важно для воспроизведения)
+APK на Windows собирается только при ASCII-путях. Кириллица в `C:\Users\<user>\.gradle` коверкает classpath worker-процесса Gradle под ru-локалью → `ClassNotFoundException: GradleWorkerMain`. Рабочий рецепт: проект → `C:\maxim_build`, `GRADLE_USER_HOME=C:\gradle_home`, SDK → `C:\Android\Sdk`. Раньше собиралось только через WSL (линуксовый путь). Зафиксировано в memory `env-bash-sandbox-uds-blocker`.
+
+### 1. Пароль 2FA — только цифры
+Поле 2FA имело `keyboardType: TextInputType.visiblePassword`. Samsung Keyboard рендерит visiblePassword цифровым падом — буквы в пароль не ввести. Заменено на `TextInputType.text` (obscureText скрывает ввод, autocorrect/suggestions уже выключены). `login_screen.dart`.
+
+### 2. Артефакты в контактах — сырой дамп names
+Имя контакта показывалось как `[{name: Я, firstName: Я, type: CUSTOM}, {...}]`. Причина: `mm['names']?.toString()` в `_parseContact` (`max_client.dart`) и `refresh` (`contacts_repository.dart`) сериализовал весь список `names`. Добавлен `displayContactName()` (`contact_name.dart`): выбор CUSTOM → ONEME → первый, внутри — `name` либо `firstName + lastName`. Тот же баг тёк в заголовок чата (title = имя контакта) — фикс закрывает оба места.
+
+### Проверка
+`flutter analyze` чисто. Пересборка APK из `C:\maxim_build`, чистая переустановка на устройство (debug-ключ сменился относительно прежней WSL-сборки → старый пакет удалён, БД очищена).

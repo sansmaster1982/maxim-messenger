@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter_contacts/flutter_contacts.dart';
 
 import '../local/database.dart';
+import '../max/contact_name.dart';
 import '../max/max_client.dart';
 import '../max/models/contact.dart';
 
@@ -45,7 +46,7 @@ class ContactsRepository {
       if (id == null) continue;
       await db.upsertContact(MaxContact(
         id: id,
-        name: mm['name']?.toString() ?? mm['names']?.toString(),
+        name: displayContactName(mm),
         phone: mm['phone']?.toString(),
         avatarUrl: mm['avatar']?.toString() ?? mm['photo']?.toString(),
       ));
