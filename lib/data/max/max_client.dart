@@ -343,27 +343,61 @@ class MaxClient {
 
   // ───────────────────────── messaging ────────────────────────
 
-  Future<Map<String, dynamic>> sendMessage(
-    int chatId,
-    String text, {
+  /// Отправка сообщения (op 64). Сервер принимает ЛИБО [chatId] (существующий
+  /// чат/группа/канал), ЛИБО [peerUserId] (новый диалог 1:1) — ровно один.
+  /// [cid] — клиентский id ВНУТРИ message (findings: lzc.java); по нему дедупим
+  /// эхо-push. Раньше форк клал peer userId в chatId → user.not.found.
+  Future<Map<String, dynamic>> sendMessage({
+    int? chatId,
+    int? peerUserId,
+    required String text,
     List<Map<String, Object?>>? attaches,
     int? replyToId,
+    int? cid,
   }) async {
-    final message = <String, Object?>{'text': text};
-    if (attaches != null && attaches.isNotEmpty) {
+    assert(
+      (chatId != null && chatId != 0) ||
+          (peerUserId != null && peerUserId != 0),
+      'sendMessage requires chatId or peerUserId',
+    );
+    final hasAttaches = attaches != null && attaches.isNotEmpty;
+    final message = <String, Object?>{
+      'cid': cid ?? DateTime.now().microsecondsSinceEpoch,
+      'text': text,
+    };
+    // detectShare (превью ссылок) — только для чисто текстовых. Для media с
+    // attaches поле не подтверждено findings — сохраняем доказанный payload.
+    if (hasAttaches) {
       message['attaches'] = attaches;
+    } else {
+      message['detectShare'] = false;
     }
     if (replyToId != null) {
-      // ключ reply в payload sendMessage MAX не подтверждён в декомпиле,
-      // отправляем как `replyTo` — сервер либо примет, либо проигнорирует.
+      // ключ reply не подтверждён в декомпиле — сервер либо примет, либо нет.
       message['replyTo'] = replyToId;
     }
-    final f = await _request(MaxOp.sendMessage, {
-      'chatId': chatId,
+    final payload = <String, Object?>{
       'message': message,
-      'randomId': DateTime.now().millisecondsSinceEpoch,
-    });
-    if (f.cmd != 1) throw MaxError('send_message cmd=${f.cmd}');
+      'notify': true,
+    };
+    if (chatId != null && chatId != 0) {
+      payload['chatId'] = chatId;
+    } else {
+      payload['userId'] = peerUserId;
+    }
+    final f = await _request(MaxOp.sendMessage, payload);
+    if (f.cmd != 1) {
+      if (f.cmd == 3) {
+        String? reason;
+        final d = f.decoded;
+        if (d is Map) {
+          final m = d.map((k, v) => MapEntry(k.toString(), v));
+          reason = m['error']?.toString() ?? m['message']?.toString();
+        }
+        throw MaxRejected('send_message rejected', f.cmd, reason: reason);
+      }
+      throw MaxError('send_message cmd=${f.cmd}');
+    }
     return _asMap(f.decoded);
   }
 
@@ -731,6 +765,7 @@ class MaxClient {
     int? msgId;
     int? timeMs;
     var attaches = const <Map<String, dynamic>>[];
+    int? cid;
 
     final d = f.decoded;
     if (d is Map) {
@@ -743,6 +778,7 @@ class MaxClient {
         sender = _toInt(mm['sender']);
         msgId = _toInt(mm['id']);
         timeMs = _toInt(mm['time']);
+        cid = _toInt(mm['cid']);
         final at = mm['attaches'] ?? mm['attachments'];
         if (at is List) {
           attaches = at
@@ -755,6 +791,7 @@ class MaxClient {
         sender = _toInt(dm['sender']);
         msgId = _toInt(dm['id']);
         timeMs = _toInt(dm['time']);
+        cid = _toInt(dm['cid']);
       }
     }
 
@@ -791,6 +828,7 @@ class MaxClient {
       timeMs: timeMs,
       raw: f.body,
       attaches: attaches,
+      cid: cid,
     );
   }
 

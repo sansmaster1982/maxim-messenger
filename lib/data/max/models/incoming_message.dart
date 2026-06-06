@@ -10,6 +10,10 @@ class IncomingMessage extends Equatable {
   final int? timeMs;
   final Uint8List raw;
 
+  /// Клиентский id (cid), если сервер вернул его в эхо нашего исходящего —
+  /// по нему дедупим собственное сообщение, чтобы не было дубля.
+  final int? cid;
+
   /// Сырой список attach'ей из push-payload. Каждый элемент — map с полем
   /// `_type` и набором полей зависящих от типа. Парсится в `MaxAttach.fromServer`.
   final List<Map<String, dynamic>> attaches;
@@ -22,8 +26,10 @@ class IncomingMessage extends Equatable {
     this.sender,
     this.timeMs,
     this.attaches = const [],
+    this.cid,
   });
 
   @override
-  List<Object?> get props => [chatId, messageId, sender, text, timeMs, attaches];
+  List<Object?> get props =>
+      [chatId, messageId, sender, text, timeMs, attaches, cid];
 }

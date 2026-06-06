@@ -174,6 +174,48 @@ class MessagesRepository {
     }
   }
 
+  /// Куда слать (op 64): server_chat_id != null → chatId; иначе peer_user_id
+  /// != null → новый диалог по userId; иначе legacy/группа → chatId = id.
+  Future<({int? chatId, int? peerUserId})> _resolveRoute(int chatId) async {
+    final c = await db.chat(chatId);
+    if (c == null) return (chatId: null, peerUserId: chatId);
+    if (c.serverChatId != null) {
+      return (chatId: c.serverChatId, peerUserId: null);
+    }
+    if (c.peerUserId != null) {
+      return (chatId: null, peerUserId: c.peerUserId);
+    }
+    return (chatId: c.id, peerUserId: null);
+  }
+
+  int? _serverMsgId(Map<String, dynamic> res) {
+    final m = res['message'];
+    if (m is Map) return (m['id'] as num?)?.toInt();
+    return null;
+  }
+
+  /// Достать серверный chatId из ответа op 64 (ключ не подтверждён — перебор
+  /// источников) и записать маршрут на ту же локальную строку, БЕЗ переноса
+  /// данных: id строки не меняется, UI/провайдеры остаются на месте.
+  Future<void> _reconcileServerChatId(
+    Map<String, dynamic> res,
+    ({int? chatId, int? peerUserId}) route,
+    int localChatId,
+  ) async {
+    if (route.peerUserId == null) return; // обычный чат — маршрут уже известен
+    int? serverChatId = (res['chatId'] as num?)?.toInt();
+    final chatObj = res['chat'];
+    if (serverChatId == null && chatObj is Map) {
+      serverChatId = (chatObj['id'] as num?)?.toInt();
+    }
+    final m = res['message'];
+    if (serverChatId == null && m is Map) {
+      serverChatId = (m['chatId'] as num?)?.toInt();
+    }
+    if (serverChatId == null) return; // ключ не пришёл — деградация, не регресс
+    await db.setServerChatId(localChatId, serverChatId);
+  }
+
   Future<MaxMessage> sendText(
     int chatId,
     String text, {
@@ -201,29 +243,45 @@ class MessagesRepository {
     );
     _onChat.add(chatId);
 
+    final cid = DateTime.now().microsecondsSinceEpoch;
     try {
-      // TODO: ключ reply в payload sendMessage MAX неизвестен; шлём только текст.
-      final res = await client.sendMessage(chatId, text);
-      final serverId = (res['message'] is Map)
-          ? ((res['message'] as Map)['id'] as num?)?.toInt()
-          : null;
+      final route = await _resolveRoute(chatId);
+      final res = await client.sendMessage(
+        chatId: route.chatId,
+        peerUserId: route.peerUserId,
+        text: text,
+        cid: cid,
+      );
+      final serverId = _serverMsgId(res);
+      await _reconcileServerChatId(res, route, chatId);
       await db.updateMessageByLocalId(
         localId,
         serverId: serverId,
         status: MessageStatus.sent,
+        cid: cid,
       );
       _onChat.add(chatId);
       return pending.copyWith(id: serverId, status: MessageStatus.sent);
     } on MaxNotConnected catch (e) {
       _log.i('sendText offline, queued: $e');
+      await db.updateMessageByLocalId(localId, cid: cid);
       await db.enqueueOutbox(localId: localId, chatId: chatId, text: text);
       _onChat.add(chatId);
       return pending;
     } on MaxTimeout catch (e) {
       _log.i('sendText timeout, queued: $e');
+      await db.updateMessageByLocalId(localId, cid: cid);
       await db.enqueueOutbox(localId: localId, chatId: chatId, text: text);
       _onChat.add(chatId);
       return pending;
+    } on MaxRejected catch (e) {
+      // permanent (user.not.found и т.п.) → rejected, не повторяем;
+      // транзиентный (throttle/flood) → failed, можно повторить руками.
+      _log.w('sendText rejected: $e');
+      final st = e.isPermanent ? MessageStatus.rejected : MessageStatus.failed;
+      await db.updateMessageByLocalId(localId, status: st);
+      _onChat.add(chatId);
+      return pending.copyWith(status: st);
     } catch (e) {
       _log.w('sendText failed: $e');
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
@@ -324,20 +382,24 @@ class MessagesRepository {
     // Все файлы загружены — собираем payload и шлём sendMessage.
     final attachesPayload =
         uploaded.map((a) => a.toServerPayload()).toList(growable: false);
+    final cid = DateTime.now().microsecondsSinceEpoch;
     try {
+      final route = await _resolveRoute(chatId);
       final res = await client.sendMessage(
-        chatId,
-        text,
+        chatId: route.chatId,
+        peerUserId: route.peerUserId,
+        text: text,
         attaches: attachesPayload,
         replyToId: replyToId,
+        cid: cid,
       );
-      final serverId = (res['message'] is Map)
-          ? ((res['message'] as Map)['id'] as num?)?.toInt()
-          : null;
+      final serverId = _serverMsgId(res);
+      await _reconcileServerChatId(res, route, chatId);
       await db.updateMessageByLocalId(
         localId,
         serverId: serverId,
         status: MessageStatus.sent,
+        cid: cid,
       );
       if (serverId != null) {
         await db.linkAttachesToServerId(localId, serverId);
@@ -363,6 +425,12 @@ class MessagesRepository {
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
       _onChat.add(chatId);
       return pending.copyWith(status: MessageStatus.failed, attaches: uploaded);
+    } on MaxRejected catch (e) {
+      _log.w('sendMedia rejected: $e');
+      final st = e.isPermanent ? MessageStatus.rejected : MessageStatus.failed;
+      await db.updateMessageByLocalId(localId, status: st);
+      _onChat.add(chatId);
+      return pending.copyWith(status: st, attaches: uploaded);
     } catch (e) {
       _log.w('sendMedia sendMessage failed: $e');
       await db.updateMessageByLocalId(localId, status: MessageStatus.failed);
@@ -530,15 +598,22 @@ class MessagesRepository {
         final chatId = (row['chat_id'] as num).toInt();
         final text = row['text'] as String;
         final attempts = (row['attempts'] as num?)?.toInt() ?? 0;
+        final cid = DateTime.now().microsecondsSinceEpoch;
         try {
-          final res = await client.sendMessage(chatId, text);
-          final serverId = (res['message'] is Map)
-              ? ((res['message'] as Map)['id'] as num?)?.toInt()
-              : null;
+          final route = await _resolveRoute(chatId);
+          final res = await client.sendMessage(
+            chatId: route.chatId,
+            peerUserId: route.peerUserId,
+            text: text,
+            cid: cid,
+          );
+          final serverId = _serverMsgId(res);
+          await _reconcileServerChatId(res, route, chatId);
           await db.updateMessageByLocalId(
             localId,
             serverId: serverId,
             status: MessageStatus.sent,
+            cid: cid,
           );
           await db.removeOutbox(localId);
           _onChat.add(chatId);
@@ -548,6 +623,24 @@ class MessagesRepository {
           return;
         } on MaxTimeout catch (e) {
           _log.i('drainOutbox stopped, timeout: $e');
+          await db.incOutboxAttempts(localId);
+          return;
+        } on MaxRejected catch (e) {
+          if (e.isPermanent) {
+            // НЕвосстановимо (user.not.found и т.п.): дроп из очереди, статус
+            // rejected, дренаж продолжает. Это и убирает «вечный долбёж».
+            _log.w('drainOutbox permanent reject, dropping: $e');
+            await db.updateMessageByLocalId(
+              localId,
+              status: MessageStatus.rejected,
+            );
+            await db.removeOutbox(localId);
+            _onChat.add(chatId);
+            continue;
+          }
+          // Транзиентный (throttle/flood): НЕ дропаем валидное сообщение —
+          // ведём как timeout, попробуем при следующем reconnect.
+          _log.i('drainOutbox transient reject, will retry: $e');
           await db.incOutboxAttempts(localId);
           return;
         } catch (e) {
@@ -561,7 +654,7 @@ class MessagesRepository {
             await db.removeOutbox(localId);
             _onChat.add(chatId);
           }
-          // Останавливаемся, не дергаем следующее — попробуем при следующем reconnect.
+          // Останавливаемся — попробуем при следующем reconnect.
           return;
         }
       }
@@ -671,9 +764,26 @@ class MessagesRepository {
     final dir = (myId != null && m.sender == myId)
         ? MessageDirection.outgoing
         : MessageDirection.incoming;
+
+    // Входящий несёт СЕРВЕРНЫЙ chatId; пишем под локальной строкой диалога,
+    // если она известна (диалог открывали из контакта по userId).
+    final localChatId = await db.localChatIdForServer(m.chatId);
+
+    // Эхо собственного отправленного: слинковать с локальной строкой по cid,
+    // не вставляя дубль.
+    if (dir == MessageDirection.outgoing &&
+        m.cid != null &&
+        m.messageId != null) {
+      final linked = await db.linkEchoByCid(m.cid!, m.messageId!);
+      if (linked) {
+        _onChat.add(localChatId);
+        return;
+      }
+    }
+
     final msg = MaxMessage(
       id: m.messageId,
-      chatId: m.chatId,
+      chatId: localChatId,
       senderId: m.sender,
       text: m.text,
       timeMs: m.timeMs ?? DateTime.now().millisecondsSinceEpoch,
@@ -683,17 +793,17 @@ class MessagesRepository {
     if (m.attaches.isNotEmpty && m.messageId != null) {
       await _persistAttaches(
         m.attaches,
-        chatId: m.chatId,
+        chatId: localChatId,
         messageServerId: m.messageId,
       );
     }
     final preview = msg.text.isNotEmpty ? msg.text : '[Вложение]';
     await db.updateChatPreview(
-      chatId: m.chatId,
+      chatId: localChatId,
       timeMs: msg.timeMs,
       preview: preview,
       incUnread: dir == MessageDirection.incoming ? 1 : 0,
     );
-    _onChat.add(m.chatId);
+    _onChat.add(localChatId);
   }
 }

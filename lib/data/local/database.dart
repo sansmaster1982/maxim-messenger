@@ -21,7 +21,7 @@ class AppDatabase {
     final path = p.join(dir.path, AppMeta.dbName);
     final db = await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -75,6 +75,16 @@ class AppDatabase {
         'ALTER TABLE chats ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0',
       );
     }
+    if (oldVersion < 7) {
+      // Маршрутизация диалогов 1:1: peer_user_id = тип (диалог с userId),
+      // server_chat_id = подтверждённый серверный chatId. cid = дедуп эхо.
+      await db.execute('ALTER TABLE chats ADD COLUMN peer_user_id INTEGER');
+      await db.execute('ALTER TABLE chats ADD COLUMN server_chat_id INTEGER');
+      await db.execute('ALTER TABLE messages ADD COLUMN cid INTEGER');
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_chats_server ON chats(server_chat_id)',
+      );
+    }
   }
 
   static Future<void> _createAttachmentsTable(Database db) async {
@@ -125,11 +135,16 @@ class AppDatabase {
         unread_count INTEGER NOT NULL DEFAULT 0,
         is_pinned INTEGER NOT NULL DEFAULT 0,
         is_archived INTEGER NOT NULL DEFAULT 0,
-        is_muted INTEGER NOT NULL DEFAULT 0
+        is_muted INTEGER NOT NULL DEFAULT 0,
+        peer_user_id INTEGER,
+        server_chat_id INTEGER
       )
     ''');
     await db.execute('''
       CREATE INDEX idx_chats_time ON chats(last_message_time_ms DESC)
+    ''');
+    await db.execute('''
+      CREATE INDEX idx_chats_server ON chats(server_chat_id)
     ''');
 
     await db.execute('''
@@ -145,7 +160,8 @@ class AppDatabase {
         status TEXT NOT NULL DEFAULT 'sent',
         reply_to_id INTEGER,
         reply_to_preview TEXT,
-        edited_at INTEGER
+        edited_at INTEGER,
+        cid INTEGER
       )
     ''');
     await db.execute('''
@@ -236,11 +252,43 @@ class AppDatabase {
     );
   }
 
+  /// Проставить подтверждённый серверный chatId диалогу (после op 64).
+  /// id строки НЕ меняется — UI/провайдеры остаются на месте.
+  Future<void> setServerChatId(int localChatId, int serverChatId) async {
+    await _db.update(
+      'chats',
+      {'server_chat_id': serverChatId},
+      where: 'id = ?',
+      whereArgs: [localChatId],
+    );
+  }
+
+  /// Локальная строка чата по подтверждённому серверному chatId.
+  Future<MaxChat?> chatByServerId(int serverChatId) async {
+    final rows = await _db.query(
+      'chats',
+      where: 'server_chat_id = ?',
+      whereArgs: [serverChatId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return MaxChat.fromDbRow(rows.first);
+  }
+
+  /// Локальный chatId, под которым лежит чат с данным серверным id.
+  /// Если отдельной строки-диалога нет — возвращает сам serverChatId
+  /// (обычные чаты/группы писались под своим серверным id).
+  Future<int> localChatIdForServer(int serverChatId) async {
+    final c = await chatByServerId(serverChatId);
+    return c?.id ?? serverChatId;
+  }
+
   Future<void> updateChatPreview({
     required int chatId,
     required int timeMs,
     required String preview,
     int incUnread = 0,
+    int? peerUserId,
   }) async {
     final existing = await chat(chatId);
     if (existing == null) {
@@ -250,6 +298,7 @@ class AppDatabase {
         lastMessageTimeMs: timeMs,
         lastMessagePreview: preview,
         unreadCount: incUnread,
+        peerUserId: peerUserId,
       ));
     } else {
       await upsertChat(existing.copyWith(
@@ -346,14 +395,29 @@ class AppDatabase {
     return MaxMessage.fromDbRow(rows.first);
   }
 
+  /// Если входящий push несёт cid нашего исходящего — это эхо уже
+  /// существующей локальной строки. Проставляем серверный id вместо вставки
+  /// дубля. Возвращает true, если эхо слинковано.
+  Future<bool> linkEchoByCid(int cid, int serverId) async {
+    final n = await _db.update(
+      'messages',
+      {'id': serverId, 'status': MessageStatus.sent.name},
+      where: 'cid = ? AND id IS NULL',
+      whereArgs: [cid],
+    );
+    return n > 0;
+  }
+
   Future<void> updateMessageByLocalId(
     String localId, {
     int? serverId,
     MessageStatus? status,
+    int? cid,
   }) async {
     final values = <String, Object?>{};
     if (serverId != null) values['id'] = serverId;
     if (status != null) values['status'] = status.name;
+    if (cid != null) values['cid'] = cid;
     if (values.isEmpty) return;
     await _db.update(
       'messages',
