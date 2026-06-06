@@ -59,6 +59,12 @@ final chatsListProvider =
   ChatsListController.new,
 );
 
+/// Подсказка «этот chatId — диалог 1:1 с этим peerUserId», выставляется
+/// навигацией (ContactsScreen._openChat) ДО построения ChatHistoryController.
+/// Нужна, чтобы отправка в новый диалог шла по userId, а не по chatId.
+final dialogPeerHintProvider =
+    StateProvider.family<int?, int>((ref, chatId) => null);
+
 /// Сообщения конкретного чата. Если есть локальные - отдаём сразу,
 /// параллельно подтягиваем свежие с сервера.
 class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
@@ -77,7 +83,8 @@ class ChatHistoryController extends FamilyAsyncNotifier<List<MaxMessage>, int> {
     _sub?.cancel();
     _sub = repo.changedChats.where((c) => c == chatId).listen((_) => _reload());
     ref.onDispose(() => _sub?.cancel());
-    await chatsRepo.ensureExists(chatId);
+    final peerHint = ref.read(dialogPeerHintProvider(chatId));
+    await chatsRepo.ensureExists(chatId, peerUserId: peerHint);
     final local = await repo.localHistory(chatId);
     if (local.isEmpty) {
       unawaited(repo.syncHistory(chatId, count: 50));

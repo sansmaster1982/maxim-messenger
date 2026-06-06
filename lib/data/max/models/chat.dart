@@ -12,6 +12,12 @@ class MaxChat extends Equatable {
   final bool isArchived;
   final bool isMuted;
 
+  /// != null ⇒ диалог 1:1 с этим userId; null ⇒ группа/канал/неизвестно.
+  final int? peerUserId;
+
+  /// != null ⇒ подтверждённый серверный chatId (маршрут отправки op 64).
+  final int? serverChatId;
+
   const MaxChat({
     required this.id,
     this.title,
@@ -23,9 +29,14 @@ class MaxChat extends Equatable {
     this.isPinned = false,
     this.isArchived = false,
     this.isMuted = false,
+    this.peerUserId,
+    this.serverChatId,
   });
 
+  bool get isDialog => peerUserId != null;
+
   MaxChat copyWith({
+    int? id,
     String? title,
     String? avatarUrl,
     bool? isGroup,
@@ -35,9 +46,11 @@ class MaxChat extends Equatable {
     bool? isPinned,
     bool? isArchived,
     bool? isMuted,
+    int? peerUserId,
+    int? serverChatId,
   }) {
     return MaxChat(
-      id: id,
+      id: id ?? this.id,
       title: title ?? this.title,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       isGroup: isGroup ?? this.isGroup,
@@ -47,6 +60,8 @@ class MaxChat extends Equatable {
       isPinned: isPinned ?? this.isPinned,
       isArchived: isArchived ?? this.isArchived,
       isMuted: isMuted ?? this.isMuted,
+      peerUserId: peerUserId ?? this.peerUserId,
+      serverChatId: serverChatId ?? this.serverChatId,
     );
   }
 
@@ -61,6 +76,8 @@ class MaxChat extends Equatable {
     'is_pinned': isPinned ? 1 : 0,
     'is_archived': isArchived ? 1 : 0,
     'is_muted': isMuted ? 1 : 0,
+    'peer_user_id': peerUserId,
+    'server_chat_id': serverChatId,
   };
 
   factory MaxChat.fromDbRow(Map<String, Object?> r) => MaxChat(
@@ -74,6 +91,8 @@ class MaxChat extends Equatable {
     isPinned: (r['is_pinned'] as int? ?? 0) == 1,
     isArchived: (r['is_archived'] as int? ?? 0) == 1,
     isMuted: (r['is_muted'] as int? ?? 0) == 1,
+    peerUserId: (r['peer_user_id'] as num?)?.toInt(),
+    serverChatId: (r['server_chat_id'] as num?)?.toInt(),
   );
 
   @override
@@ -88,5 +107,7 @@ class MaxChat extends Equatable {
     isPinned,
     isArchived,
     isMuted,
+    peerUserId,
+    serverChatId,
   ];
 }

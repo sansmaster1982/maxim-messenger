@@ -141,7 +141,7 @@ Future<void> _runCommand(MaxClient client, String line) async {
       }
       final chatId = int.parse(parts[1]);
       final text = parts.skip(2).join(' ');
-      final res = await client.sendMessage(chatId, text);
+      final res = await client.sendMessage(chatId: chatId, text: text);
       stdout.writeln('OK: $res');
       break;
     case 'hist':

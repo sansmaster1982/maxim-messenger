@@ -313,3 +313,26 @@ APK на Windows собирается только при ASCII-путях. Ки
 
 ### Проверка
 `flutter analyze` чисто, 32 теста зелёных (+8 на `ReconnectPolicy`: backoff, authThrottle, breaker, nextDelay). Опубликовано в `maxim-messenger`, релиз `v0.1.2`.
+
+---
+
+## Этап 10 — Отправка в новый диалог 1:1 + чистка outbox (v0.1.3) (2026-06-06)
+
+Живой тест: вход новой симкой прошёл (LOGIN-токен, не REGISTER), но отправка отлетала `cmd=3 user.not.found, args:[User, <chatId>]`, а outbox долбил сообщение бесконечно.
+
+### Корень (реверс op 64, агент + воркфлоу из 6 агентов)
+op 64 (MSG_SEND) принимает ЛИБО `chatId` (существующий чат), ЛИБО `userId` (новый диалог 1:1). Форк клал USER-id контакта в ключ `chatId` → сервер не находит чат. Рабочий python-клиент слал в УЖЕ существующие чаты (chatId из списка), потому и работал. Плюс `cid` должен лежать ВНУТРИ message, а не top-level `randomId`.
+
+### Сделано (12 файлов, спроектировано+проверено воркфлоу design+review)
+- `MaxClient.sendMessage`: новая сигнатура — `chatId` ИЛИ `peerUserId`; `cid` внутри message, `notify:true`, `detectShare:false` (только для текста); на `cmd=3` бросает `MaxRejected` с `reason`.
+- Маршрутизация без «переезда» chat-id: две колонки в `chats` — `peer_user_id` (тип: диалог 1:1) и `server_chat_id` (подтверждённый серверный id). `_resolveRoute`: serverChatId → chatId; иначе peerUserId → userId; иначе legacy → id. После отправки серверный chatId пишется в ту же строку (id в UI не меняется). Входящий push нормализуется по `server_chat_id`.
+- Дедуп эхо своего сообщения по `cid` (колонка `messages.cid`, `linkEchoByCid`).
+- Outbox: `MaxRejected.isPermanent` (user.not.found и пр.) → статус `rejected`, дроп из очереди, дренаж продолжается (конец «вечного долбежа»); транзиентный отказ (throttle) НЕ теряет сообщение — ведёт как timeout.
+- Тип диалога приходит явно из навигации (`dialogPeerHintProvider`, `ContactsScreen._openChat` ставит hint до перехода) — без эвристики «id ∈ contacts», чтобы не ломать группы.
+- Миграция БД v7 (peer_user_id, server_chat_id, messages.cid), новый `MessageStatus.rejected`.
+
+### Открытые швы (помечены воркфлоу, проверить вживую)
+Ключ серверного chatId в ответе op 64 не подтверждён (перебор chatId/chat.id/message.chatId; деградация безопасна). `cid` во входящем push не подтверждён (без него дедуп деградирует). Whitelist permanent-кодов по логу уточнить.
+
+### Проверка
+`flutter analyze` чисто, 34 теста зелёных (+`reject_reason`). Опубликовано, релиз `v0.1.3`.

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/max/models/contact.dart';
 import '../../data/repositories/contacts_repository.dart';
+import '../../state/chats_controller.dart';
 import '../../state/contacts_controller.dart';
 import '../../state/providers.dart';
 import 'chat_screen.dart';
@@ -124,6 +125,9 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
   }
 
   void _openChat(MaxContact c) {
+    // Подсказка «это диалог 1:1 с c.id» ДО навигации: чтобы отправка в новый
+    // диалог шла по userId (op 64), а не по chatId — иначе user.not.found.
+    ref.read(dialogPeerHintProvider(c.id).notifier).state = c.id;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatScreen(chatId: c.id, title: c.name),

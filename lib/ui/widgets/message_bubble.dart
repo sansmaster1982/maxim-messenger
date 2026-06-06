@@ -182,6 +182,9 @@ class MessageBubble extends StatelessWidget {
         return Icons.done_all;
       case MessageStatus.failed:
         return Icons.error_outline;
+      case MessageStatus.rejected:
+        // Сервер отверг навсегда (например получатель не найден) — не повтор.
+        return Icons.block;
     }
   }
 }
