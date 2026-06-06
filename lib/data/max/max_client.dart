@@ -705,6 +705,12 @@ class MaxClient {
         continue;
       }
 
+      // Диагностика приёма: логируем КАЖДЫЙ серверный push-кадр (несматченный
+      // по seq), чтобы видеть, доставляет ли сервер входящие по сокету.
+      _log.i(
+        'PUSH cmd=${frame.cmd} op=${frame.opcode} len=${frame.body.length} '
+        'decoded=${_redact(frame.decoded)}',
+      );
       onPushDebug?.call(frame);
       final msg = _parsePush(frame);
       if (msg != null && !_pushCtrl.isClosed) {
