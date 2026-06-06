@@ -185,6 +185,14 @@ class MessagesRepository {
     if (c.peerUserId != null) {
       return (chatId: null, peerUserId: c.peerUserId);
     }
+    // Маршрут не выставлен (старая строка или чат открыт не из навигации).
+    // Если этот id есть в контактах — это диалог 1:1, слать по userId.
+    // Группы сюда не попадают: у них server_chat_id проставлен при синхронизации
+    // списка чатов, и мы вышли бы выше по ветке serverChatId.
+    final contact = await db.contact(chatId);
+    if (contact != null) {
+      return (chatId: null, peerUserId: chatId);
+    }
     return (chatId: c.id, peerUserId: null);
   }
 
