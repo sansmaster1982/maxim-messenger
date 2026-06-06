@@ -1,0 +1,54 @@
+name: maxim_messenger
+description: "Maxim - кросс-платформенный клиент мессенджера MAX"
+publish_to: 'none'
+version: 0.1.5+6
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Сеть и протокол
+  msgpack_dart: ^1.0.1
+  http: ^1.2.2
+  mime: ^2.0.0
+
+  # Локальное хранение
+  sqflite: ^2.4.1
+  sqflite_common_ffi: ^2.3.4   # для Windows/Linux/macOS desktop
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  flutter_secure_storage: ^9.2.2
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # UI и утилиты
+  intl: ^0.20.1
+  cached_network_image: ^3.4.1
+  flutter_svg: ^2.0.16
+  equatable: ^2.0.7
+  logger: ^2.5.0
+  uuid: ^4.5.1
+  # Реальные поля устройства для userAgent INIT (anti-ban: правдоподобный
+  # официальный отпечаток вместо урезанного «не родной клиент»).
+  device_info_plus: ^11.1.0
+
+  # Медиа (UI; реальная отправка медиа — TODO, опкоды протокола не реверснуты)
+  image_picker: ^1.1.2
+  file_picker: ^8.1.7
+  permission_handler: ^11.3.1
+
+  # Адресная книга
+  flutter_contacts: ^1.1.9+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
