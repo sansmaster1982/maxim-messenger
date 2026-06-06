@@ -12,6 +12,7 @@ import 'lz4_block.dart';
 import 'max_codec.dart';
 import 'models/incoming_message.dart';
 import 'raw_parsers.dart';
+import 'reconnect_policy.dart';
 
 /// Колбэк для отладки push-фреймов (как `on_push_debug` в Python-версии).
 typedef PushDebug = void Function(MaxFrame frame);
@@ -52,6 +53,20 @@ class MaxClient {
   set onAuthInvalid(void Function()? cb) => _authInvalid = cb;
 
   String? _token;
+
+  /// Часы с последнего успешного LOGIN — для anti-storm throttle
+  /// (см. [ReconnectPolicy.authThrottle]). Не сбрасывается при дисконнекте:
+  /// считаем именно время с последней АВТОРИЗАЦИИ, а не с разрыва.
+  final Stopwatch _sinceLogin = Stopwatch();
+  Duration get sinceLastLogin =>
+      _sinceLogin.isRunning ? _sinceLogin.elapsed : const Duration(days: 3650);
+
+  /// Keepalive: пока соединение живо, раз в [_pingInterval] шлём лёгкий
+  /// read-only запрос, чтобы сервер не рвал сокет по простою и не провоцировал
+  /// реконнект-шторм с переавторизацией (главный бан-фактор).
+  Timer? _keepalive;
+  static const Duration _pingInterval = Duration(seconds: 25);
+
   String get deviceId => _deviceId ?? '(unresolved)';
 
   /// Кеш разрешённого deviceId. null до первого [_resolveDeviceId].
@@ -154,6 +169,7 @@ class MaxClient {
 
   /// Закрытие сокета без флага «навсегда» — для авто-переподключения.
   Future<void> _disconnect() async {
+    _stopKeepalive();
     await _sub?.cancel();
     _sub = null;
     try {
@@ -289,7 +305,40 @@ class MaxClient {
     });
     if (f.cmd != 1) throw MaxLoginFailed('LOGIN cmd=${f.cmd}');
     _token = token;
+    _sinceLogin
+      ..reset()
+      ..start();
+    _startKeepalive();
     return f.body;
+  }
+
+  // ───────────────────────── keepalive ────────────────────────
+
+  void _startKeepalive() {
+    _keepalive?.cancel();
+    _keepalive = Timer.periodic(_pingInterval, (_) => unawaited(_ping()));
+  }
+
+  void _stopKeepalive() {
+    _keepalive?.cancel();
+    _keepalive = null;
+  }
+
+  /// Лёгкий heartbeat: read-only запрос профиля (op 16) держит соединение
+  /// тёплым и заодно проверяет живость. Дедицированный ping-опкод протокола
+  /// в декомпиле не подтверждён, поэтому используем заведомо валидный запрос.
+  Future<void> _ping() async {
+    if (_socket == null || _closed) return;
+    try {
+      await _request(
+        MaxOp.profile,
+        const <String, Object?>{},
+        timeout: const Duration(seconds: 15),
+      );
+    } catch (e) {
+      // Реальный дроп/таймаут обработают onError/onDone → reconnect.
+      _log.d('keepalive ping failed: $e');
+    }
   }
 
   // ───────────────────────── messaging ────────────────────────
@@ -643,6 +692,7 @@ class MaxClient {
   }
 
   void _handleDrop() {
+    _stopKeepalive();
     // Уже синхронно убираем подписку и сокет — без флага «навсегда».
     unawaited(_sub?.cancel() ?? Future<void>.value());
     _sub = null;
@@ -832,29 +882,33 @@ class MaxClient {
   }
 }
 
-/// Экспоненциальный backoff: 2s → 4s → 8s → 16s → 32s → 60s (cap).
-/// При успехе сбрасывается в 2s. Защищён от двойного запуска флагом
-/// [_running].
+/// Менеджер переподключения. Тайминги делегированы в [ReconnectPolicy]
+/// (тестируется отдельно). Ключевое отличие от прежней версии: пауза НЕ
+/// сбрасывается в 2с на каждый успех, а ограничивается потолком частоты LOGIN —
+/// это убирает реконнект-шторм, из-за которого банили номер. Защищён от
+/// двойного запуска флагом [_running].
 class _ReconnectManager {
-  _ReconnectManager(this._client, this._log);
+  _ReconnectManager(this._client, this._log, [ReconnectPolicy? policy])
+    : _policy = policy ?? ReconnectPolicy();
 
   final MaxClient _client;
   final Logger _log;
+  final ReconnectPolicy _policy;
 
-  static const _baseDelay = Duration(seconds: 2);
-  static const _maxDelay = Duration(seconds: 60);
-
-  Duration _delay = _baseDelay;
+  int _attempt = 0;
   bool _running = false;
   bool _cancelled = false;
   Timer? _timer;
 
+  /// Монотонные часы + времена попыток для предохранителя (флаппинг).
+  final Stopwatch _clock = Stopwatch()..start();
+  final List<Duration> _attempts = <Duration>[];
+
   /// Запускает цикл переподключения, если он ещё не запущен.
   void start() {
-    if (_running || _cancelled) return;
-    if (_client._closed) return;
+    if (_running || _cancelled || _client._closed) return;
     _running = true;
-    _delay = _baseDelay;
+    _attempt = 0;
     _schedule();
   }
 
@@ -866,21 +920,36 @@ class _ReconnectManager {
     _timer = null;
   }
 
-  void _schedule() {
-    _timer?.cancel();
-    _log.i('reconnect scheduled in ${_delay.inSeconds}s');
-    _timer = Timer(_delay, _attempt);
+  void _pruneWindow() {
+    final cutoff = _clock.elapsed - _policy.breakerWindow;
+    _attempts.removeWhere((t) => t < cutoff);
   }
 
-  Future<void> _attempt() async {
+  void _schedule() {
+    _timer?.cancel();
+    _pruneWindow();
+    final delay = _policy.nextDelay(
+      attempt: _attempt,
+      sinceLastLogin: _client.sinceLastLogin,
+      attemptsInWindow: _attempts.length,
+    );
+    _log.i(
+      'reconnect через ${delay.inSeconds}s (попытка $_attempt, '
+      'в окне ${_attempts.length}, с LOGIN ${_client.sinceLastLogin.inSeconds}s)',
+    );
+    _timer = Timer(delay, _tryReconnect);
+  }
+
+  Future<void> _tryReconnect() async {
     if (_cancelled || _client._closed) {
       _running = false;
       return;
     }
+    _attempts.add(_clock.elapsed);
     try {
       await _client.reconnect();
       _log.i('reconnect succeeded');
-      _delay = _baseDelay;
+      _attempt = 0;
       _running = false;
     } catch (e) {
       _log.w('reconnect attempt failed: $e');
@@ -895,9 +964,7 @@ class _ReconnectManager {
         _client._authInvalid?.call();
         return;
       }
-      // Удваиваем, но не больше cap.
-      final next = _delay * 2;
-      _delay = next > _maxDelay ? _maxDelay : next;
+      _attempt++;
       if (!_cancelled && !_client._closed) {
         _schedule();
       } else {
