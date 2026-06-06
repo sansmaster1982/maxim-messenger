@@ -309,6 +309,9 @@ class MaxClient {
       ..reset()
       ..start();
     _startKeepalive();
+    // Снимаем «навсегда»-отмену reconnect, которую мог поставить мёртвый токен
+    // (MaxLoginFailed) ранее: после успешного LOGIN авто-реконнект снова нужен.
+    _reconnect.rearm();
     return f.body;
   }
 
@@ -962,6 +965,15 @@ class _ReconnectManager {
     _running = false;
     _timer?.cancel();
     _timer = null;
+  }
+
+  /// Снять «навсегда»-отмену после успешного LOGIN. Без этого однажды
+  /// поставленный мёртвым токеном [_cancelled] навсегда глушил авто-реконнект,
+  /// и после повторного входа дроп сети уже не переподключался (socket null,
+  /// отправки висли в очереди). Сам цикл не запускаем — следующий дроп вызовет
+  /// [start]. _running не трогаем (им владеет активный цикл [_tryReconnect]).
+  void rearm() {
+    _cancelled = false;
   }
 
   void _pruneWindow() {

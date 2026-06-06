@@ -77,25 +77,53 @@ class MessagesRepository {
       db.messages(chatId, limit: limit);
 
   /// Подтянуть N последних сообщений с сервера и сохранить локально.
+  /// Вызывается часто как unawaited — поэтому НЕ бросаем при отсутствии сети,
+  /// иначе ловим Unhandled Exception. На offline отдаём локальную историю.
   Future<List<MaxMessage>> syncHistory(int chatId, {int count = 50}) async {
-    return _fetchAndStore(chatId, fromId: 0, count: count, updatePreview: true);
+    try {
+      return await _fetchAndStore(
+        chatId,
+        fromId: 0,
+        count: count,
+        updatePreview: true,
+      );
+    } on MaxNotConnected catch (e) {
+      _log.i('syncHistory skipped (offline): $e');
+      return localHistory(chatId);
+    } on MaxTimeout catch (e) {
+      _log.i('syncHistory skipped (timeout): $e');
+      return localHistory(chatId);
+    }
   }
 
   /// Догрузить более старые сообщения от самого раннего локально известного id.
   /// Возвращает то, что удалось вытащить (может быть пусто, если на сервере
   /// больше ничего нет или соединение мертвое).
   Future<List<MaxMessage>> loadOlder(int chatId, {int count = 50}) async {
-    final oldest = await db.oldestServerMessageId(chatId);
-    if (oldest == null) {
-      // локально пусто — нечего пагинировать, имеет смысл только обычный sync
-      return _fetchAndStore(chatId, fromId: 0, count: count, updatePreview: true);
+    try {
+      final oldest = await db.oldestServerMessageId(chatId);
+      if (oldest == null) {
+        // локально пусто — нечего пагинировать, имеет смысл только обычный sync
+        return await _fetchAndStore(
+          chatId,
+          fromId: 0,
+          count: count,
+          updatePreview: true,
+        );
+      }
+      return await _fetchAndStore(
+        chatId,
+        fromId: oldest,
+        count: count,
+        updatePreview: false,
+      );
+    } on MaxNotConnected catch (e) {
+      _log.i('loadOlder skipped (offline): $e');
+      return localHistory(chatId);
+    } on MaxTimeout catch (e) {
+      _log.i('loadOlder skipped (timeout): $e');
+      return localHistory(chatId);
     }
-    return _fetchAndStore(
-      chatId,
-      fromId: oldest,
-      count: count,
-      updatePreview: false,
-    );
   }
 
   Future<List<MaxMessage>> _fetchAndStore(

@@ -8,7 +8,26 @@ class ChatsRepository {
   final MaxClient client;
   final AppDatabase db;
 
-  Future<List<MaxChat>> listLocal() => db.chats();
+  Future<List<MaxChat>> listLocal() async {
+    final chats = await db.chats();
+    // Для диалогов с плейсхолдерным именем («Чат N») или пустым подставляем
+    // имя контакта — иначе в списке чат называется числом.
+    final out = <MaxChat>[];
+    for (final c in chats) {
+      final isPlaceholder =
+          c.title == null || c.title!.isEmpty || c.title == 'Чат ${c.id}';
+      if (isPlaceholder) {
+        final contact = await db.contact(c.id);
+        final name = contact?.name;
+        if (name != null && name.isNotEmpty) {
+          out.add(c.copyWith(title: name));
+          continue;
+        }
+      }
+      out.add(c);
+    }
+    return out;
+  }
 
   Future<MaxChat?> get(int id) => db.chat(id);
 
