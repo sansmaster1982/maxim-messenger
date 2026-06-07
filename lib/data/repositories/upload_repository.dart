@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:logger/logger.dart';
+import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 
 import '../../core/errors.dart';
 import '../local/database.dart';
@@ -91,14 +93,17 @@ class UploadRepository {
       throw UploadError('local file not found: ${input.path}');
     }
 
-    final request = http.MultipartRequest('POST', Uri.parse(url));
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'file',
-        input.path,
-        filename: input.fileName,
-      ),
-    );
+    // Реальный MAX льёт файл одним PUT СЫРЫХ байтов (не multipart):
+    // Content-Type: application/octet-stream + content-disposition/-range.
+    // Ответ — msgpack {token, attachId}. (w6j.java/z6j.java в декомпиле.)
+    final bytes = await file.readAsBytes();
+    final host = Uri.tryParse(url)?.host ?? '?';
+    _log.i('upload POST ${bytes.length}B → host=$host');
+    final request = http.Request('POST', Uri.parse(url))
+      ..bodyBytes = bytes
+      ..headers['Content-Type'] = 'application/octet-stream'
+      ..headers['Content-Disposition'] =
+          'attachment; filename=${Uri.encodeComponent(input.fileName ?? 'file')}';
 
     onProgress?.call(0.3);
     http.StreamedResponse streamed;
@@ -113,15 +118,14 @@ class UploadRepository {
 
     final bodyBytes = await streamed.stream.toBytes();
     if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      _log.w('upload non-2xx: ${streamed.statusCode}');
+      _log.w('upload non-2xx: ${streamed.statusCode} body=${_safeAscii(bodyBytes)}');
       await db.updateAttach(attachRowId, status: MaxAttachStatus.failed);
       throw UploadError('HTTP ${streamed.statusCode}');
     }
 
-    final bodyStr = utf8.decode(bodyBytes, allowMalformed: true);
-    final parsed = _extractToken(bodyStr);
+    final parsed = _extractTokenFromBytes(bodyBytes);
     if (parsed.token == null && parsed.fileId == null) {
-      _log.w('upload token missing in body: $bodyStr');
+      _log.w('upload token missing in body (len=${bodyBytes.length})');
       await db.updateAttach(attachRowId, status: MaxAttachStatus.failed);
       throw const UploadError('token missing in upload response');
     }
@@ -171,7 +175,7 @@ class UploadRepository {
       final v = resp[key];
       if (v is String && v.isNotEmpty) return v;
     }
-    for (final listKey in const ['urls', 'upload', 'uploads']) {
+    for (final listKey in const ['info', 'urls', 'upload', 'uploads']) {
       final lst = resp[listKey];
       if (lst is List && lst.isNotEmpty) {
         final first = lst.first;
@@ -196,6 +200,35 @@ class UploadRepository {
     return null;
   }
 
+  /// Ответ upload-сервера MAX — msgpack `{token, attachId, thumbhashBase64}`
+  /// (op.java/d7j.java в декомпиле). `token` — это и есть photoToken для
+  /// вложения. Если тело не msgpack — откатываемся на JSON/plain парсер.
+  _UploadResult _extractTokenFromBytes(List<int> bodyBytes) {
+    try {
+      final decoded = msgpack.deserialize(
+        bodyBytes is Uint8List ? bodyBytes : Uint8List.fromList(bodyBytes),
+      );
+      if (decoded is Map) {
+        final m = decoded.map((k, v) => MapEntry(k.toString(), v));
+        final token = m['token']?.toString();
+        final attachId = (m['attachId'] as num?)?.toInt() ??
+            (m['fileId'] as num?)?.toInt() ??
+            (m['id'] as num?)?.toInt();
+        if ((token != null && token.isNotEmpty) || attachId != null) {
+          return _UploadResult(token: token, fileId: attachId);
+        }
+      }
+    } catch (_) {
+      // не msgpack — пробуем как текст/JSON ниже
+    }
+    return _extractToken(utf8.decode(bodyBytes, allowMalformed: true));
+  }
+
+  static String _safeAscii(List<int> b) {
+    final s = utf8.decode(b, allowMalformed: true);
+    return s.length > 200 ? '${s.substring(0, 200)}…' : s;
+  }
+
   /// Парсит тело HTTP-ответа с upload-сервера. Возвращает любой из:
   /// `photoToken`, `token`, `videoId`, `fileId`, `id`. Поиск идёт сначала
   /// по верхнему уровню, потом по `result.tokens[0]`, `result.id`,
@@ -214,6 +247,20 @@ class UploadRepository {
     }
     if (decoded is! Map) return const _UploadResult();
     final m = decoded.map((k, v) => MapEntry(k.toString(), v));
+
+    // Реальный ответ /uploadImage: {"photos": {"<id>": {"token": "..."}}}.
+    // Токен фото — значение photos.<первый ключ>.token; сам ключ = photoId.
+    final photos = m['photos'];
+    if (photos is Map && photos.isNotEmpty) {
+      final firstId = photos.keys.first;
+      final first = photos.values.first;
+      if (first is Map) {
+        final t = first['token']?.toString();
+        if (t != null && t.isNotEmpty) {
+          return _UploadResult(token: t, fileId: int.tryParse('$firstId'));
+        }
+      }
+    }
 
     String? token;
     int? fileId;
