@@ -23,6 +23,9 @@ class DeviceProfile {
   const DeviceProfile._();
 
   static Future<Map<String, Object?>> userAgent(String deviceType) async {
+    if (deviceType == 'IOS') {
+      return _iosUserAgent();
+    }
     if (deviceType != 'ANDROID') {
       return minimal(deviceType);
     }
@@ -59,6 +62,47 @@ class DeviceProfile {
       'pushDeviceType': 'GCM',
       'appVersion': MaxProto.appVersion,
       'arch': arch,
+      'buildNumber': MaxProto.appBuild,
+      'osVersion': osVersion,
+      'locale': MaxProto.locale,
+      'deviceLocale': MaxProto.deviceLocale,
+      'deviceName': deviceName,
+      'screen': screen,
+      'timezone': _ianaTimezone(),
+    };
+  }
+
+  /// Полный userAgent для iOS-сборки (deviceType=IOS). Тот же набор полей и
+  /// порядок, что у ANDROID, но pushDeviceType=APNS и реальные поля iPhone.
+  /// Имя устройства берём как модель (iPhone15,2), НЕ пользовательское имя
+  /// (то — PII). ВНИМАНИЕ: appVersion/buildNumber здесь пока от Android-сборки;
+  /// для полной маскировки подставь версию ОФИЦИАЛЬНОГО iOS-приложения MAX.
+  static Future<Map<String, Object?>> _iosUserAgent() async {
+    var osVersion = '17.0';
+    var deviceName = 'iPhone';
+    try {
+      final info = await DeviceInfoPlugin().iosInfo;
+      if (info.systemVersion.isNotEmpty) osVersion = info.systemVersion;
+      final model = info.utsname.machine.trim();
+      deviceName = model.isNotEmpty ? model : info.model;
+    } catch (_) {
+      // Нет нативного канала (не iOS/тест) — дефолты.
+    }
+
+    var screen = '1170x2532';
+    try {
+      final view = ui.PlatformDispatcher.instance.implicitView;
+      final size = view?.physicalSize;
+      if (size != null && size.width > 0 && size.height > 0) {
+        screen = '${size.width.round()}x${size.height.round()}';
+      }
+    } catch (_) {}
+
+    return {
+      'deviceType': 'IOS',
+      'pushDeviceType': 'APNS',
+      'appVersion': MaxProto.appVersion,
+      'arch': 'arm64',
       'buildNumber': MaxProto.appBuild,
       'osVersion': osVersion,
       'locale': MaxProto.locale,
