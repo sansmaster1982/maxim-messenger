@@ -562,6 +562,30 @@ class MaxClient {
     return _asMap(f.decoded);
   }
 
+  /// Список активных сессий/устройств аккаунта (op 96 SESSIONS_INFO).
+  /// Формат ответа уточняется по живому логу (парсер в декомпиле generic).
+  Future<Map<String, dynamic>> sessionsInfo() async {
+    final f = await _request(MaxOp.sessionsInfo, const <String, Object?>{});
+    if (f.cmd != 1) throw MaxError('sessionsInfo cmd=${f.cmd}');
+    final m = _asMap(f.decoded);
+    _log.i('sessionsInfo ключи=${m.keys.toList()}');
+    return m;
+  }
+
+  /// Завершить сессии (op 97 SESSIONS_CLOSE). [sessionId] — закрыть одну
+  /// конкретную; [exceptCurrent]=true — закрыть все, кроме текущей.
+  Future<Map<String, dynamic>> closeSessions({
+    int? sessionId,
+    bool exceptCurrent = false,
+  }) async {
+    final payload = <String, Object?>{};
+    if (sessionId != null) payload['sessionId'] = sessionId;
+    if (exceptCurrent) payload['exceptCurrent'] = true;
+    final f = await _request(MaxOp.sessionsClose, payload);
+    if (f.cmd != 1) throw MaxError('sessionsClose cmd=${f.cmd}');
+    return _asMap(f.decoded);
+  }
+
   /// Получить URL воспроизведения видео (opcode 83).
   Future<Map<String, dynamic>> requestVideoPlay({
     required int videoId,
