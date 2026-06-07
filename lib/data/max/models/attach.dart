@@ -131,21 +131,42 @@ class MaxAttach extends Equatable {
     );
   }
 
-  /// Сериализация для msgpack-payload поля `message.attaches` в SEND_MESSAGE.
-  /// Минимум: `_type` + token/fileId; остальные поля сервер заполняет сам.
+  /// Сериализация для msgpack-payload поля `message.attaches` в SEND_MESSAGE
+  /// (op 64). По декомпилу реального MAX (c60.java + dbd.java) на провод для
+  /// ФОТО уходит РОВНО `{_type:"PHOTO", photoToken:<token>}` — никаких
+  /// width/baseUrl/size, сервер достаёт их сам по токену. Для остальных типов
+  /// формат подтверждён слабее, кладём минимум с наиболее вероятным ключом.
   Map<String, Object?> toServerPayload() {
-    final m = <String, Object?>{
-      '_type': type.protocolName,
-    };
-    if (token != null) m['token'] = token;
-    if (fileId != null) m['fileId'] = fileId;
-    if (mimeType != null) m['mimeType'] = mimeType;
-    if (size != null) m['size'] = size;
-    if (width != null) m['width'] = width;
-    if (height != null) m['height'] = height;
-    if (durationMs != null) m['duration'] = durationMs;
-    if (fileName != null) m['name'] = fileName;
+    final m = <String, Object?>{'_type': type.protocolName};
+    switch (type) {
+      case MaxAttachType.photo:
+      case MaxAttachType.sticker:
+        if (token != null) m['photoToken'] = token;
+        break;
+      case MaxAttachType.video:
+      case MaxAttachType.videoMsg:
+        if (token != null) m['token'] = token;
+        if (fileId != null) m['videoId'] = fileId;
+        break;
+      case MaxAttachType.audio:
+        if (token != null) m['token'] = token;
+        if (fileId != null) m['audioId'] = fileId;
+        break;
+      case MaxAttachType.file:
+        if (token != null) m['token'] = token;
+        if (fileId != null) m['fileId'] = fileId;
+        if (fileName != null) m['name'] = fileName;
+        break;
+    }
     return m;
+  }
+
+  /// Достраивает URL картинки из `baseUrl` по правилу реального MAX
+  /// (xu0.b: `baseUrl + "&fn=" + descriptor`). baseUrl уже несёт свой токен
+  /// в query, поэтому добавляем размер через `&` (или `?`, если query пуст).
+  static String withSizeDescriptor(String baseUrl, String descriptor) {
+    final sep = baseUrl.contains('?') ? '&' : '?';
+    return '$baseUrl${sep}fn=$descriptor';
   }
 
   Map<String, Object?> toDbMap() => {
@@ -193,20 +214,54 @@ class MaxAttach extends Equatable {
   }
 
   /// Распаковка attach из ответа сервера (push или history).
+  /// Для фото реальный MAX кладёт `baseUrl` (хост i.oneme.ru, с токеном в
+  /// query) и иногда готовый `photoUrl`. URL для показа: `photoUrl` если есть,
+  /// иначе `baseUrl + &fn=w_720` (p80.b/xu0.b в декомпиле).
   factory MaxAttach.fromServer(Map<String, Object?> m) {
     final typeStr = m['_type']?.toString() ?? m['type']?.toString() ?? 'FILE';
+    final type = MaxAttachType.fromProtocol(typeStr);
+
+    final baseUrl = m['baseUrl']?.toString();
+    final photoUrl = m['photoUrl']?.toString();
+    final previewUrl = m['previewUrl']?.toString();
+    final isImage =
+        type == MaxAttachType.photo || type == MaxAttachType.sticker;
+
+    String? displayUrl;
+    if (photoUrl != null && photoUrl.isNotEmpty) {
+      displayUrl = photoUrl;
+    } else if (baseUrl != null && baseUrl.isNotEmpty) {
+      displayUrl = withSizeDescriptor(
+        baseUrl,
+        type == MaxAttachType.sticker ? 'sqr_256' : 'w_720',
+      );
+    }
+    // Миниатюра: явный previewUrl, иначе квадрат из baseUrl для картинок.
+    String? thumbUrl = (previewUrl != null && previewUrl.isNotEmpty)
+        ? previewUrl
+        : m['thumbnail']?.toString();
+    if ((thumbUrl == null || thumbUrl.isEmpty) &&
+        isImage &&
+        baseUrl != null &&
+        baseUrl.isNotEmpty) {
+      thumbUrl = withSizeDescriptor(baseUrl, 'sqr_320');
+    }
+
     return MaxAttach(
-      type: MaxAttachType.fromProtocol(typeStr),
+      type: type,
       status: MaxAttachStatus.uploaded,
-      token: m['token']?.toString() ?? m['photoToken']?.toString(),
+      token: m['photoToken']?.toString() ?? m['token']?.toString(),
       fileId: (m['fileId'] as num?)?.toInt() ??
+          (m['photoId'] as num?)?.toInt() ??
+          (m['videoId'] as num?)?.toInt() ??
           (m['id'] as num?)?.toInt(),
       mimeType: m['mimeType']?.toString(),
       size: (m['size'] as num?)?.toInt(),
       width: (m['width'] as num?)?.toInt(),
       height: (m['height'] as num?)?.toInt(),
       durationMs: (m['duration'] as num?)?.toInt(),
-      thumbnailUrl: m['previewUrl']?.toString() ?? m['thumbnail']?.toString(),
+      downloadUrl: displayUrl,
+      thumbnailUrl: thumbUrl,
       fileName: m['name']?.toString(),
     );
   }

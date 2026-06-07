@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -126,11 +127,7 @@ class MaxClient {
     if (deviceType != null) _deviceType = deviceType;
     _emitState(MaxConnectionState.connecting);
     try {
-      final s = await SecureSocket.connect(
-        MaxProto.host,
-        MaxProto.port,
-        timeout: const Duration(seconds: 15),
-      );
+      final s = await _openSecureSocket();
       s.setOption(SocketOption.tcpNoDelay, true);
       _socket = s;
       _closed = false;
@@ -154,6 +151,87 @@ class MaxClient {
       _emitState(MaxConnectionState.disconnected);
       rethrow;
     }
+  }
+
+  /// IP, добытый через DoH — кэш на сессию, чтобы не дёргать DoH на каждом
+  /// reconnect, пока системный DNS «молчит».
+  String? _dohIp;
+
+  /// Открывает TLS-сокет к api.oneme.ru. Сначала обычным путём (системный DNS).
+  /// Если системный DNS не резолвит хост (errno 7 — бывает на Wi-Fi с
+  /// фильтрующим/недоступным DNS), резолвим адрес через DoH (Cloudflare, по IP,
+  /// мимо системного DNS) и коннектимся по IP с SNI и проверкой сертификата на
+  /// api.oneme.ru. Так клиент поднимается и на мобильной, и на Wi-Fi, чей DNS
+  /// не отдаёт адрес MAX.
+  Future<SecureSocket> _openSecureSocket() async {
+    try {
+      return await SecureSocket.connect(
+        MaxProto.host,
+        MaxProto.port,
+        timeout: const Duration(seconds: 15),
+      );
+    } on SocketException catch (e) {
+      final isDnsFail = e.osError?.errorCode == 7 ||
+          e.message.contains('Failed host lookup') ||
+          e.message.contains('No address associated');
+      if (!isDnsFail) rethrow;
+      final ip = _dohIp ?? await _resolveViaDoh(MaxProto.host);
+      if (ip == null) {
+        _log.w('DoH-фолбэк не дал IP для ${MaxProto.host}');
+        rethrow;
+      }
+      _dohIp = ip;
+      try {
+        final raw = await Socket.connect(
+          ip,
+          MaxProto.port,
+          timeout: const Duration(seconds: 15),
+        );
+        raw.setOption(SocketOption.tcpNoDelay, true);
+        // host: задаёт SNI и имя для проверки сертификата — коннект по IP,
+        // но TLS валидируется против api.oneme.ru.
+        final secure = await SecureSocket.secure(raw, host: MaxProto.host);
+        _log.i('подключение через DoH-IP $ip (системный DNS молчит)');
+        return secure;
+      } catch (_) {
+        _dohIp = null; // IP протух/неверный — сбросим кэш
+        rethrow;
+      }
+    }
+  }
+
+  /// Резолв A-записи через DNS-over-HTTPS (Cloudflare). Запрос идёт на IP
+  /// 1.1.1.1/1.0.0.1, поэтому не зависит от системного DNS.
+  Future<String?> _resolveViaDoh(String host) async {
+    final http = HttpClient()..connectionTimeout = const Duration(seconds: 8);
+    try {
+      for (final resolver in const ['1.1.1.1', '1.0.0.1']) {
+        try {
+          final uri =
+              Uri.parse('https://$resolver/dns-query?name=$host&type=A');
+          final req = await http.getUrl(uri);
+          req.headers.set('accept', 'application/dns-json');
+          final resp = await req.close().timeout(const Duration(seconds: 8));
+          if (resp.statusCode != 200) continue;
+          final body = await resp.transform(utf8.decoder).join();
+          final data = jsonDecode(body);
+          if (data is Map && data['Answer'] is List) {
+            for (final a in (data['Answer'] as List)) {
+              // type 1 = A-запись (IPv4)
+              if (a is Map && a['type'] == 1) {
+                final ip = a['data']?.toString();
+                if (ip != null && ip.isNotEmpty) return ip;
+              }
+            }
+          }
+        } catch (e) {
+          _log.d('DoH $resolver: $e');
+        }
+      }
+    } finally {
+      http.close(force: true);
+    }
+    return null;
   }
 
   /// Переподключение по сохранённому токену. Не выставляет [_closed].
@@ -293,6 +371,13 @@ class MaxClient {
 
   /// Логин по сохранённому токену. Возвращает raw payload, оттуда вызывающий
   /// код может вытащить контакты/чаты при синхронизации.
+  final _syncedChats = StreamController<List<dynamic>>.broadcast();
+
+  /// Чаты из ответа LOGIN (op 19) вместе с их lastMessage. Нужны, чтобы
+  /// восстановить входящие сообщения/медиа, если живой push (op 128) был
+  /// пропущен на обрыве: на каждом reconnect LOGIN отдаёт свежий lastMessage.
+  Stream<List<dynamic>> get syncedChatsStream => _syncedChats.stream;
+
   Future<Uint8List> login(String token) async {
     final f = await _request(MaxOp.login, {
       'token': token,
@@ -312,6 +397,13 @@ class MaxClient {
     // Снимаем «навсегда»-отмену reconnect, которую мог поставить мёртвый токен
     // (MaxLoginFailed) ранее: после успешного LOGIN авто-реконнект снова нужен.
     _reconnect.rearm();
+    final dec = f.decoded;
+    if (dec is Map) {
+      final chats = dec['chats'];
+      if (chats is List && chats.isNotEmpty && _syncedChats.hasListener) {
+        _syncedChats.add(chats);
+      }
+    }
     return f.body;
   }
 
@@ -630,7 +722,15 @@ class MaxClient {
     if (v is Map) {
       return v.map((k, v2) {
         final ks = k.toString();
-        if (ks == 'token' || ks == 'password' || ks == 'trackId') {
+        if (ks == 'token' ||
+            ks == 'password' ||
+            ks == 'trackId' ||
+            ks == 'photoToken' ||
+            ks == 'url' ||
+            ks == 'baseUrl' ||
+            ks == 'photoUrl' ||
+            ks == 'previewData' ||
+            ks == 'thumbhashData') {
           return MapEntry(ks, '<redacted>');
         }
         return MapEntry(ks, _redact(v2));
@@ -1001,9 +1101,12 @@ class _ReconnectManager {
       _running = false;
       return;
     }
-    _attempts.add(_clock.elapsed);
     try {
       await _client.reconnect();
+      // Предохранитель считает только УСПЕШНЫЕ переавторизации (риск бана —
+      // частота re-auth, а не неудачные коннекты к недоступному серверу).
+      // Иначе на лежащей сети 6 неудач → 8 мин офлайна без причины.
+      _attempts.add(_clock.elapsed);
       _log.i('reconnect succeeded');
       _attempt = 0;
       _running = false;

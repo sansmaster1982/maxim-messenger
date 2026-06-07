@@ -41,6 +41,9 @@ class MaxRejected extends MaxError {
     'chat.not.found',
     'recipient.not.found',
     'user.blocked',
+    // Ошибка валидации payload (например пустой текст): повтор того же
+    // тела не поможет, а сервер на него РВЁТ соединение → бесконечная петля.
+    'proto.payload',
   }.contains(reason);
 
   @override

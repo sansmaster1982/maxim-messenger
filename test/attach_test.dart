@@ -3,7 +3,9 @@ import 'package:maxim_messenger/data/max/models/attach.dart';
 
 void main() {
   group('MaxAttach', () {
-    test('roundtrip server payload preserves type token size', () {
+    test('photo server payload is minimal {_type, photoToken}', () {
+      // Реальный MAX (c60.java + dbd.java) шлёт для ФОТО ровно _type+photoToken,
+      // без size/width/baseUrl — сервер достаёт их по токену.
       final a = MaxAttach(
         type: MaxAttachType.photo,
         status: MaxAttachStatus.uploaded,
@@ -14,10 +16,31 @@ void main() {
       );
       final payload = a.toServerPayload();
       expect(payload['_type'], 'PHOTO');
-      expect(payload['token'], 'abc');
-      expect(payload['size'], 1024);
-      expect(payload['width'], 320);
-      expect(payload['height'], 240);
+      expect(payload['photoToken'], 'abc');
+      expect(payload.containsKey('token'), isFalse);
+      expect(payload.containsKey('size'), isFalse);
+      expect(payload.containsKey('width'), isFalse);
+    });
+
+    test('fromServer builds display url from baseUrl with &fn=w_720', () {
+      final a = MaxAttach.fromServer({
+        '_type': 'PHOTO',
+        'baseUrl': 'https://i.oneme.ru/p.jpg?token=xyz',
+        'width': 800,
+        'height': 600,
+      });
+      expect(a.type, MaxAttachType.photo);
+      expect(a.downloadUrl, 'https://i.oneme.ru/p.jpg?token=xyz&fn=w_720');
+      expect(a.width, 800);
+    });
+
+    test('fromServer prefers explicit photoUrl over baseUrl', () {
+      final a = MaxAttach.fromServer({
+        '_type': 'PHOTO',
+        'photoUrl': 'https://i.oneme.ru/direct.jpg',
+        'baseUrl': 'https://i.oneme.ru/p.jpg?token=xyz',
+      });
+      expect(a.downloadUrl, 'https://i.oneme.ru/direct.jpg');
     });
 
     test('fromServer recognises type and token aliases', () {

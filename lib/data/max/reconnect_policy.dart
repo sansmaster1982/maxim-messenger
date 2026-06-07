@@ -15,7 +15,7 @@ import 'dart:math';
 class ReconnectPolicy {
   ReconnectPolicy({
     this.base = const Duration(seconds: 5),
-    this.maxDelay = const Duration(minutes: 5),
+    this.maxDelay = const Duration(seconds: 60),
     this.minAuthInterval = const Duration(seconds: 30),
     this.breakerWindow = const Duration(minutes: 5),
     this.breakerMaxAttempts = 6,
