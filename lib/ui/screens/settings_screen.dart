@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants.dart';
 import '../../state/session_controller.dart';
+import 'devices_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -23,6 +24,15 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text('app ${MaxProto.appVersion}, '
                 'proto v${MaxProto.protoVersion}'),
             leading: const Icon(Icons.cloud_outlined),
+          ),
+          const Divider(),
+          ListTile(
+            title: const Text('Устройства и сессии'),
+            subtitle: const Text('Активные входы · завершить чужие'),
+            leading: const Icon(Icons.devices_outlined),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DevicesScreen()),
+            ),
           ),
           const Divider(),
           ListTile(

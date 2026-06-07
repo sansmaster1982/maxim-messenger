@@ -38,6 +38,8 @@ class MaxOp {
   static const int videoPlay = 83;
   static const int fileUpload = 87;
   static const int fileDownload = 88;
+  static const int sessionsInfo = 96;
+  static const int sessionsClose = 97;
   static const int twoFa = 115;
   static const int notifAttach = 136;
   static const int transcribeMedia = 202;
