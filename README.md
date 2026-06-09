@@ -1,12 +1,13 @@
 # Maxim — кросс-платформенный клиент MAX
 
+**Поддержи проект:**
+
 [![Bitcoin](https://img.shields.io/badge/Bitcoin-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](#поддержать-проект)
 [![Ethereum](https://img.shields.io/badge/Ethereum-627eea?style=for-the-badge&logo=ethereum&logoColor=white)](#поддержать-проект)
 [![USDT TRC-20](https://img.shields.io/badge/USDT%20TRC--20-26a17b?style=for-the-badge&logo=tether&logoColor=white)](#поддержать-проект)
 
 Форк-клиент мессенджера MAX (api.oneme.ru) для Android и iOS, написанный
-на Flutter. Использует реверс-инжиниринг протокола из проекта
-`telega-to-max` (Python).
+на Flutter.
 
 ## Статус
 
