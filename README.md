@@ -1,5 +1,9 @@
 # Maxim — кросс-платформенный клиент MAX
 
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](#поддержать-проект)
+[![Ethereum](https://img.shields.io/badge/Ethereum-627eea?style=for-the-badge&logo=ethereum&logoColor=white)](#поддержать-проект)
+[![USDT TRC-20](https://img.shields.io/badge/USDT%20TRC--20-26a17b?style=for-the-badge&logo=tether&logoColor=white)](#поддержать-проект)
+
 Форк-клиент мессенджера MAX (api.oneme.ru) для Android и iOS, написанный
 на Flutter. Использует реверс-инжиниринг протокола из проекта
 `telega-to-max` (Python).
@@ -188,3 +192,15 @@ git checkout <commit>
 5. Группы (members, аватары, права).
 6. Тайпинг-индикатор от собеседника (приходит ли в push — проверить).
 7. Дешифровка ASN.1/E2E если он есть в MAX (пока не проверено).
+
+## Поддержать проект
+
+Проект развивается на энтузиазме. Если он полезен — можно поддержать криптой:
+
+| Сеть | Адрес |
+| --- | --- |
+| **BTC** (Bitcoin) | `bc1qs5fly0u7fa9dgg2dmlzqf82ttxvwy2hl68g059` |
+| **ETH** (Ethereum, ERC-20) | `0x7a36d08EF5dC64dDC50a5687A9F209CC72e857d5` |
+| **USDT** (TRON, TRC-20) | `TVfxWMieo8xUGu73FjGR6Xb7Q3atYgUMr3` |
+
+Перед отправкой сверь адрес и сеть: транзакцию в крипте не отменить.
